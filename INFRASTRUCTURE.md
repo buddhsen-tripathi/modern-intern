@@ -139,16 +139,26 @@ Manages the real-time connection to Google's Gemini 2.5 Flash Live API.
 | Compression | Sliding window context compression |
 | Reconnect | Up to 5 consecutive errors before full reconnect |
 
-**Personality — Gen Z Homeboy:**
+**Camera Perspective — Rear (Outward-Facing):**
 
-Silas is the player's homeboy and hype-man. He talks in Gen Z slang (yo, bruh, lowkey, no cap, fr, W, L, slay, bet, fam, vibes). He keeps it short, casual, and hype — never sounds like a narrator or NPC.
+The player holds their phone with the **rear camera facing outward**. Gemini sees what is in front of the player — surroundings, other people, the environment. **The player is never visible.** Player actions are inferred by combining:
+
+- **Audio** — player's voice (greetings, conversation, laughter) via mic
+- **Scene** — who is visible in frame, proximity, reactions of other people
+- **Context** — camera moving toward people = approaching; conversation audio + people in frame = engaging; static empty scene + silence = idle
+
+This means some actions (e.g. gestures, facial expressions, body language) cannot be directly observed. Scoring and tasks are biased toward **audio-verifiable** actions (speak, ask, laugh, compliment) rather than visual-only actions (wave, smile, nod).
+
+**Personality:**
+
+Silas is the player's friend and wingman. Chill, warm, quick — talks like a real friend. One sentence replies, two max. Never sounds like a narrator, announcer, or NPC.
 
 **Dual Mode — Conversation + Background Scoring:**
 
 Silas operates in two modes that switch automatically:
 
-- **MODE 1 — Background (default):** When no one is speaking, Silas checks the scene via adaptive nudge prompts (8-20s intervals based on activity), scoring social interactions and penalizing inactivity. Can also drop tasks for the player.
-- **MODE 2 — Conversation:** When the player speaks directly (detected via VAD), Silas responds like a real homie, 1-3 sentences. Scoring tags are optional during conversation. After responding, Silas waits for the next nudge.
+- **MODE 1 — Background (default):** When no one is speaking, Silas checks the scene (outward camera + mic audio) via adaptive nudge prompts (8-20s intervals based on activity), scoring social interactions and penalizing inactivity. Can also drop tasks for the player.
+- **MODE 2 — Conversation:** When the player speaks directly (detected via VAD), Silas responds naturally, 1-2 sentences. Scoring tags are optional during conversation. After responding, Silas waits for the next nudge.
 
 **Nudger-Pause Behavior:**
 
