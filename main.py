@@ -140,6 +140,9 @@ async def _stdin_reader(app: web.Application):
 
 
 async def _start_stdin_reader(app: web.Application):
+    if not sys.stdin.isatty():
+        log.info("Non-interactive mode — CLI commands disabled")
+        return
     app["stdin_task"] = asyncio.create_task(_stdin_reader(app))
 
 
