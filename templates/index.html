@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Social Alchemist</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+  <!-- Camera layer (always behind everything) -->
+  <div id="camera-layer">
+    <video id="camera-video" autoplay playsinline muted></video>
+    <canvas id="capture-canvas"></canvas>
+  </div>
+
+  <!-- Start screen -->
+  <div id="start-screen">
+    <div class="start-content">
+      <div class="start-logo">
+        <div class="logo-icon">&#9883;</div>
+        <div class="start-title">SOCIAL ALCHEMIST</div>
+        <div class="start-subtitle">KINDNESS SPEEDRUN</div>
+      </div>
+
+      <div class="intro-area" id="intro-area">
+        <div class="intro-text" id="intro-text"></div>
+      </div>
+
+      <button id="start-btn" class="btn-primary">ENTER REALM</button>
+      <div class="start-hint" id="start-hint">Camera + microphone required</div>
+    </div>
+
+    <!-- Decorative corners -->
+    <div class="corner-decor top-left"></div>
+    <div class="corner-decor top-right"></div>
+    <div class="corner-decor bottom-left"></div>
+    <div class="corner-decor bottom-right"></div>
+  </div>
+
+  <!-- HUD overlay (shown during game) -->
+  <div id="hud">
+    <!-- Top bar -->
+    <div class="hud-top">
+      <div class="hud-top-left">
+        <div class="timer-container">
+          <svg class="timer-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+          </svg>
+          <span class="timer" id="timer">3:00</span>
+        </div>
+      </div>
+      <div class="hud-top-center">
+        <div class="streak-container" id="streak-container">
+          <span class="streak-label">STREAK</span>
+          <span class="streak-count" id="streak-count">0</span>
+          <span class="multiplier" id="multiplier">1x</span>
+        </div>
+      </div>
+      <div class="hud-top-right">
+        <div id="rank-badge" class="rank-badge rank-Bronze">
+          <span class="rank-icon">&#9830;</span>
+          <span class="rank-text">Bronze</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Toasts (middle area) -->
+    <div class="hud-mid">
+      <div id="toast-container"></div>
+    </div>
+
+    <!-- Bottom: essence bar + narration -->
+    <div class="hud-bottom">
+      <div class="essence-container">
+        <div class="essence-header">
+          <span class="essence-label">ESSENCE</span>
+          <span class="essence-value" id="essence-value">0</span>
+        </div>
+        <div class="essence-bar-track">
+          <div class="essence-bar-fill" id="essence-fill"></div>
+          <div class="essence-bar-glow" id="essence-glow"></div>
+        </div>
+        <div class="essence-markers">
+          <span>0</span><span>250</span><span>500</span><span>750</span><span>1000</span>
+        </div>
+      </div>
+      <div class="narration-bar">
+        <div class="narration-indicator">
+          <div class="mic-indicator" id="mic-dot"></div>
+          <span class="narration-label">SILAS</span>
+        </div>
+        <div class="narration-text" id="narration-text">Awaiting transmission...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Game over screen -->
+  <div id="gameover-screen">
+    <div class="gameover-content">
+      <div class="gameover-header">
+        <div class="gameover-title" id="go-title">TRANSMUTATION COMPLETE</div>
+        <div class="gameover-divider"></div>
+      </div>
+
+      <div class="gameover-rank-display">
+        <div class="gameover-rank rank-Bronze" id="go-rank">Bronze</div>
+      </div>
+
+      <div class="gameover-score-area">
+        <div class="gameover-score" id="go-score">0</div>
+        <div class="gameover-score-label">ESSENCE COLLECTED</div>
+      </div>
+
+      <div class="gameover-stats">
+        <div class="stat-card">
+          <div class="stat-value" id="go-best-streak">0</div>
+          <div class="stat-label">BEST STREAK</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="go-multiplier">1x</div>
+          <div class="stat-label">TOP MULTI</div>
+        </div>
+      </div>
+
+      <button id="replay-btn" class="btn-secondary">PLAY AGAIN</button>
+    </div>
+
+    <div class="corner-decor top-left"></div>
+    <div class="corner-decor top-right"></div>
+    <div class="corner-decor bottom-left"></div>
+    <div class="corner-decor bottom-right"></div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

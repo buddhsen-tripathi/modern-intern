@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Social Alchemist - Camera</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: #111;
+            color: #0f0;
+            font-family: monospace;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+            padding: 10px;
+        }
+        h1 { font-size: 16px; margin: 10px 0; }
+        #status {
+            padding: 8px 16px;
+            border-radius: 4px;
+            margin: 8px 0;
+            font-size: 14px;
+        }
+        .connected { background: #0a3; color: #fff; }
+        .disconnected { background: #a00; color: #fff; }
+        .connecting { background: #a80; color: #fff; }
+        video {
+            width: 100%;
+            max-width: 400px;
+            border: 2px solid #0f0;
+            border-radius: 4px;
+        }
+        canvas { display: none; }
+        #stats {
+            margin-top: 10px;
+            font-size: 12px;
+            color: #888;
+        }
+        button {
+            margin-top: 10px;
+            padding: 10px 24px;
+            font-size: 16px;
+            background: #0a3;
+            color: #fff;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:disabled { background: #555; cursor: not-allowed; }
+    </style>
+</head>
+<body>
+    <h1>SOCIAL ALCHEMIST — CAMERA FEED</h1>
+    <div id="status" class="disconnected">Disconnected</div>
+    <video id="video" autoplay playsinline muted></video>
+    <canvas id="canvas"></canvas>
+    <div id="stats">Frames sent: 0 | Size: -- KB</div>
+    <button id="startBtn" onclick="start()">Start Streaming</button>
+
+    <script>
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const statusEl = document.getElementById('status');
+        const statsEl = document.getElementById('stats');
+        const startBtn = document.getElementById('startBtn');
+
+        let ws = null;
+        let frameCount = 0;
+        let streaming = false;
+
+        function setStatus(text, cls) {
+            statusEl.textContent = text;
+            statusEl.className = cls;
+        }
+
+        async function start() {
+            startBtn.disabled = true;
+
+            // Get camera
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: 'environment', width: 768, height: 768 },
+                    audio: false,
+                });
+                video.srcObject = stream;
+                await video.play();
+            } catch (e) {
+                setStatus('Camera access denied: ' + e.message, 'disconnected');
+                startBtn.disabled = false;
+                return;
+            }
+
+            // Connect WebSocket — same server, /ws/camera endpoint
+            const wsUrl = `ws://${window.location.host}/ws/camera`;
+            setStatus('Connecting to ' + wsUrl, 'connecting');
+
+            ws = new WebSocket(wsUrl);
+            ws.binaryType = 'arraybuffer';
+
+            ws.onopen = () => {
+                setStatus('Connected — streaming', 'connected');
+                streaming = true;
+                captureLoop();
+            };
+
+            ws.onclose = () => {
+                setStatus('Disconnected', 'disconnected');
+                streaming = false;
+                startBtn.disabled = false;
+            };
+
+            ws.onerror = (e) => {
+                setStatus('WebSocket error', 'disconnected');
+                console.error('WS error:', e);
+                streaming = false;
+                startBtn.disabled = false;
+            };
+        }
+
+        function captureLoop() {
+            if (!streaming || ws.readyState !== WebSocket.OPEN) return;
+
+            // Draw video frame to canvas at 768x768
+            canvas.width = 768;
+            canvas.height = 768;
+
+            const vw = video.videoWidth;
+            const vh = video.videoHeight;
+            const size = Math.min(vw, vh);
+            const sx = (vw - size) / 2;
+            const sy = (vh - size) / 2;
+            ctx.drawImage(video, sx, sy, size, size, 0, 0, 768, 768);
+
+            // Encode as JPEG and send
+            canvas.toBlob((blob) => {
+                if (blob && ws.readyState === WebSocket.OPEN) {
+                    ws.send(blob);
+                    frameCount++;
+                    statsEl.textContent = `Frames sent: ${frameCount} | Size: ${(blob.size / 1024).toFixed(1)} KB`;
+                }
+                // Next frame in 1 second (1 FPS)
+                setTimeout(captureLoop, 1000);
+            }, 'image/jpeg', 0.7);
+        }
+    </script>
+</body>
+</html>
