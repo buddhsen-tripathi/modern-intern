@@ -1,9 +1,9 @@
 /**
- * Social Alchemist — Game Client
+ * JOYBAIT — spread the love — Game Client
  *
  * Two-phase start:
- *   1. ENTER REALM → init camera/audio/WS, request intro narration
- *   2. BEGIN QUEST → start game timer + scoring (enabled after intro finishes)
+ *   1. LET'S GO → init camera/audio/WS, request intro narration
+ *   2. START VIBING → start game timer + scoring (enabled after intro finishes)
  *
  * Camera → JPEG 1FPS → WS
  * Mic → 16kHz PCM → WS (via AudioWorklet)
@@ -19,6 +19,14 @@ const TAG_MUSIC = 0x02;
 
 const NARRATION_RATE = 24000;
 const MUSIC_RATE = 48000;
+
+const PENALTY_LABELS = {
+  idle: "just standing there fr",
+  phone_staring: "get off your phone bruh",
+  walking_away: "ghosting the vibes",
+  ignoring: "npc behavior",
+  prolonged_silence: "quiet quitting irl",
+};
 
 // ── DOM refs ────────────────────────────────────────────
 const video = document.getElementById("camera-video");
@@ -37,18 +45,25 @@ const streakEl = document.getElementById("streak-count");
 const streakContainer = document.getElementById("streak-container");
 const multEl = document.getElementById("multiplier");
 const rankEl = document.getElementById("rank-badge");
-const essenceBar = document.getElementById("essence-fill");
-const essenceGlow = document.getElementById("essence-glow");
-const essenceVal = document.getElementById("essence-value");
+const vibesBar = document.getElementById("vibes-fill");
+const vibesGlow = document.getElementById("vibes-glow");
+const vibesVal = document.getElementById("vibes-value");
 const narrationText = document.getElementById("narration-text");
 const micDot = document.getElementById("mic-dot");
+const voiceStatus = document.getElementById("voice-status");
 const toastContainer = document.getElementById("toast-container");
+const taskBar = document.getElementById("task-bar");
+const taskText = document.getElementById("task-text");
+const taskBonus = document.getElementById("task-bonus");
+const taskSkip = document.getElementById("task-skip");
+const scoreFeed = document.getElementById("score-feed");
 
 const goTitle = document.getElementById("go-title");
 const goRank = document.getElementById("go-rank");
 const goScore = document.getElementById("go-score");
 const goStreak = document.getElementById("go-best-streak");
 const goMultiplier = document.getElementById("go-multiplier");
+const goTasks = document.getElementById("go-tasks");
 const replayBtn = document.getElementById("replay-btn");
 
 // ── State ───────────────────────────────────────────────
@@ -223,7 +238,7 @@ function connectWS() {
     if (phase === "intro") {
       // Send intro request once connected
       ws.send(JSON.stringify({ type: "intro" }));
-      startHint.textContent = "SILAS IS AWAKENING...";
+      startHint.textContent = "SILAS IS LOADING...";
       // Start streaming camera now that WS is open
       captureLoop();
     }
@@ -264,6 +279,19 @@ function handleJSON(msg) {
         showNarration(msg.text);
       }
       break;
+    case "vad_state":
+      if (msg.state === "LISTENING") {
+        micDot.classList.add("listening");
+        voiceStatus.textContent = "LISTENING";
+        voiceStatus.className = "voice-status listening";
+      } else {
+        micDot.classList.remove("listening");
+        if (micStream) {
+          voiceStatus.textContent = "VOICE";
+          voiceStatus.className = "voice-status active";
+        }
+      }
+      break;
   }
 }
 
@@ -281,8 +309,6 @@ function handleBinary(data) {
       // Reset the "intro done" timer every time we get audio
       clearTimeout(introEndTimer);
       introEndTimer = setTimeout(onIntroDone, 2000);
-    } else {
-      micDot.classList.remove("listening");
     }
   } else if (tag === TAG_MUSIC) {
     playMusicChunk(int16);
@@ -303,14 +329,14 @@ function showIntroNarration(text) {
 }
 
 function onIntroDone() {
-  console.log("[Intro] Complete — enabling BEGIN QUEST");
-  startBtn.textContent = "BEGIN QUEST";
+  console.log("[Intro] Complete — enabling START VIBING");
+  startBtn.textContent = "START VIBING";
   startBtn.disabled = false;
   startHint.textContent = "TAP TO START THE GAME";
 
-  // Switch handler to begin quest
-  startBtn.removeEventListener("click", enterRealm);
-  startBtn.addEventListener("click", beginQuest);
+  // Switch handler to start vibing
+  startBtn.removeEventListener("click", letsGo);
+  startBtn.addEventListener("click", startVibing);
 }
 
 // ── HUD Updates ─────────────────────────────────────────
@@ -345,28 +371,37 @@ function updateHUD(state) {
     streakContainer.classList.remove("hot", "fire");
   }
 
-  essenceVal.textContent = state.essence;
+  vibesVal.textContent = state.vibes;
 
-  // Essence bar
-  const pct = Math.min(100, (state.essence / 1000) * 100);
-  essenceBar.style.width = `${pct}%`;
+  // Vibes bar
+  const pct = Math.min(100, (state.vibes / 1000) * 100);
+  vibesBar.style.width = `${pct}%`;
 
   // Position glow at end of fill
   if (pct > 0) {
-    essenceGlow.style.left = `calc(${pct}% - 10px)`;
-    essenceGlow.style.opacity = "1";
+    vibesGlow.style.left = `calc(${pct}% - 10px)`;
+    vibesGlow.style.opacity = "1";
   } else {
-    essenceGlow.style.opacity = "0";
+    vibesGlow.style.opacity = "0";
   }
 
   // Rank badge
-  const rankText = rankEl.querySelector(".rank-text");
-  if (rankText) rankText.textContent = state.rank;
+  const rankTextEl = rankEl.querySelector(".rank-text");
+  if (rankTextEl) rankTextEl.textContent = state.rank;
   rankEl.className = `rank-badge rank-${state.rank}`;
 
   // Track bests
   if (state.streak > bestStreak) bestStreak = state.streak;
   if (state.multiplier > bestMultiplier) bestMultiplier = state.multiplier;
+
+  // Task bar
+  if (state.activeTask) {
+    taskBar.style.display = "flex";
+    taskText.textContent = state.activeTask.text;
+    taskBonus.textContent = `+${state.activeTask.bonus}`;
+  } else {
+    taskBar.style.display = "none";
+  }
 
   // Game over
   if (state.gameOver) {
@@ -376,18 +411,69 @@ function updateHUD(state) {
 
 function showToast(event) {
   const el = document.createElement("div");
+
   if (event.type === "score") {
     el.className = "toast score";
-    el.textContent = `+${event.points} ESSENCE`;
-    if (event.multiplier > 1) {
-      el.textContent += ` (${event.multiplier}x)`;
+    const pts = document.createElement("div");
+    pts.className = "toast-points";
+    pts.textContent = `+${event.points} VIBES` + (event.multiplier > 1 ? ` (${event.multiplier}x)` : "");
+    el.appendChild(pts);
+    if (event.description) {
+      const desc = document.createElement("div");
+      desc.className = "toast-desc";
+      desc.textContent = event.description;
+      el.appendChild(desc);
     }
-  } else {
+    addToFeed("score", `+${event.points}`, event.description || event.action);
+  } else if (event.type === "task") {
+    el.className = "toast task";
+    el.textContent = `TASK COMPLETE! +${event.points} BONUS`;
+    addToFeed("score", `+${event.points}`, "task complete");
+  } else if (event.type === "skip_task") {
     el.className = "toast penalize";
-    el.textContent = `-${event.points} ESSENCE`;
+    const pts = document.createElement("div");
+    pts.className = "toast-points";
+    pts.textContent = `-${event.points} VIBES`;
+    el.appendChild(pts);
+    const desc = document.createElement("div");
+    desc.className = "toast-desc";
+    desc.textContent = "skipped the task";
+    el.appendChild(desc);
+    addToFeed("penalize", `-${event.points}`, "skipped task");
+  } else if (event.type === "penalize") {
+    el.className = "toast penalize";
+    const pts = document.createElement("div");
+    pts.className = "toast-points";
+    pts.textContent = `-${event.points} VIBES`;
+    el.appendChild(pts);
+    const reason = PENALTY_LABELS[event.action] || event.action || "bad vibes";
+    const desc = document.createElement("div");
+    desc.className = "toast-desc";
+    desc.textContent = reason;
+    el.appendChild(desc);
+    addToFeed("penalize", `-${event.points}`, reason);
   }
+
   toastContainer.appendChild(el);
   el.addEventListener("animationend", () => el.remove());
+}
+
+function addToFeed(type, points, label) {
+  const entry = document.createElement("div");
+  entry.className = `feed-entry feed-${type}`;
+  entry.innerHTML = `<span class="feed-points">${points}</span> <span class="feed-label">${label}</span>`;
+  scoreFeed.appendChild(entry);
+
+  // Max 4 entries
+  while (scoreFeed.children.length > 4) {
+    scoreFeed.removeChild(scoreFeed.firstChild);
+  }
+
+  // Auto-fade after 6s
+  setTimeout(() => {
+    entry.classList.add("feed-fade");
+    entry.addEventListener("animationend", () => entry.remove());
+  }, 6000);
 }
 
 function showNarration(text) {
@@ -404,40 +490,46 @@ function showGameOver(state) {
   hud.classList.remove("active");
   gameoverScreen.classList.add("active");
 
-  const won = state.essence >= 400;
-  goTitle.textContent = won ? "TRANSMUTATION COMPLETE" : "TIME EXPIRED";
+  const won = state.vibes >= 400;
+  goTitle.textContent = won ? "ABSOLUTE W" : "RAN OUT OF TIME";
   goTitle.style.color = won ? "var(--green-400)" : "var(--red-400)";
 
   goRank.textContent = state.rank;
   goRank.className = `gameover-rank rank-${state.rank}`;
 
-  goScore.textContent = state.essence;
+  goScore.textContent = state.vibes;
   goStreak.textContent = bestStreak;
   goMultiplier.textContent = `${bestMultiplier}x`;
+  goTasks.textContent = state.tasksCompleted || 0;
 }
 
-// ── Start / Enter / Begin / Replay ──────────────────────
+// ── Start / Let's Go / Start Vibing / Replay ────────────
 
-async function enterRealm() {
+async function letsGo() {
   startBtn.disabled = true;
-  startBtn.textContent = "CONNECTING...";
-  startHint.textContent = "Initializing systems...";
+  startBtn.textContent = "LOADING...";
+  startHint.textContent = "grant cam + mic permissions...";
 
   try {
     initAudio();
     await startCamera();
+    startHint.textContent = "camera ready, connecting mic...";
   } catch (err) {
     alert("Camera access required: " + err.message);
     startBtn.disabled = false;
-    startBtn.textContent = "ENTER REALM";
-    startHint.textContent = "Camera + microphone required";
+    startBtn.textContent = "LET'S GO";
+    startHint.textContent = "need your cam + mic fam";
     return;
   }
 
   try {
     await startMic();
+    voiceStatus.textContent = "VOICE";
+    voiceStatus.className = "voice-status active";
   } catch (err) {
     console.warn("Mic not available:", err);
+    voiceStatus.textContent = "NO MIC";
+    voiceStatus.className = "voice-status no-mic";
   }
 
   phase = "intro";
@@ -448,7 +540,7 @@ async function enterRealm() {
   connectWS();
 }
 
-async function beginQuest() {
+async function startVibing() {
   startBtn.disabled = true;
 
   if (ws && ws.readyState === WebSocket.OPEN) {
@@ -459,7 +551,7 @@ async function beginQuest() {
 
     startScreen.style.display = "none";
     hud.classList.add("active");
-    // captureLoop already running from enterRealm — no need to restart
+    // captureLoop already running from letsGo — no need to restart
   }
 }
 
@@ -472,6 +564,8 @@ function replayGame() {
   narrationText.textContent = "Awaiting transmission...";
   narrationNextTime = 0;
   musicNextTime = 0;
+  taskBar.style.display = "none";
+  scoreFeed.innerHTML = "";
 
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({ type: "start" }));
@@ -481,5 +575,10 @@ function replayGame() {
 }
 
 // ── Event Listeners ─────────────────────────────────────
-startBtn.addEventListener("click", enterRealm);
+startBtn.addEventListener("click", letsGo);
 replayBtn.addEventListener("click", replayGame);
+taskSkip.addEventListener("click", () => {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: "skip_task" }));
+  }
+});

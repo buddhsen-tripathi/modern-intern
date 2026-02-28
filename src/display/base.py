@@ -23,3 +23,7 @@ class DisplayService(ABC):
     @abstractmethod
     async def send_music_audio(self, audio_bytes: bytes):
         """Send music audio (48kHz stereo PCM)."""
+
+    @abstractmethod
+    async def send_vad_state(self, state: str):
+        """Send VAD state update (LISTENING, IDLE, PENDING)."""

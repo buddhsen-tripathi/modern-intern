@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Social Alchemist</title>
+  <title>JOYBAIT</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
@@ -18,24 +18,18 @@
   <div id="start-screen">
     <div class="start-content">
       <div class="start-logo">
-        <div class="logo-icon">&#9883;</div>
-        <div class="start-title">SOCIAL ALCHEMIST</div>
-        <div class="start-subtitle">KINDNESS SPEEDRUN</div>
+        <div class="logo-icon">&#x1F525;</div>
+        <div class="start-title">JOYBAIT</div>
+        <div class="start-subtitle">SPREAD THE LOVE</div>
       </div>
 
       <div class="intro-area" id="intro-area">
         <div class="intro-text" id="intro-text"></div>
       </div>
 
-      <button id="start-btn" class="btn-primary">ENTER REALM</button>
-      <div class="start-hint" id="start-hint">Camera + microphone required</div>
+      <button id="start-btn" class="btn-primary">LET'S GO</button>
+      <div class="start-hint" id="start-hint">need your cam + mic fam</div>
     </div>
-
-    <!-- Decorative corners -->
-    <div class="corner-decor top-left"></div>
-    <div class="corner-decor top-right"></div>
-    <div class="corner-decor bottom-left"></div>
-    <div class="corner-decor bottom-right"></div>
   </div>
 
   <!-- HUD overlay (shown during game) -->
@@ -58,9 +52,9 @@
         </div>
       </div>
       <div class="hud-top-right">
-        <div id="rank-badge" class="rank-badge rank-Bronze">
+        <div id="rank-badge" class="rank-badge rank-Basic">
           <span class="rank-icon">&#9830;</span>
-          <span class="rank-text">Bronze</span>
+          <span class="rank-text">Basic</span>
         </div>
       </div>
     </div>
@@ -70,20 +64,27 @@
       <div id="toast-container"></div>
     </div>
 
-    <!-- Bottom: essence bar + narration -->
+    <!-- Bottom: vibes bar + task bar + narration -->
     <div class="hud-bottom">
-      <div class="essence-container">
-        <div class="essence-header">
-          <span class="essence-label">ESSENCE</span>
-          <span class="essence-value" id="essence-value">0</span>
+      <div class="score-feed" id="score-feed"></div>
+      <div class="vibes-container">
+        <div class="vibes-header">
+          <span class="vibes-label">VIBES</span>
+          <span class="vibes-value" id="vibes-value">0</span>
         </div>
-        <div class="essence-bar-track">
-          <div class="essence-bar-fill" id="essence-fill"></div>
-          <div class="essence-bar-glow" id="essence-glow"></div>
+        <div class="vibes-bar-track">
+          <div class="vibes-bar-fill" id="vibes-fill"></div>
+          <div class="vibes-bar-glow" id="vibes-glow"></div>
         </div>
-        <div class="essence-markers">
+        <div class="vibes-markers">
           <span>0</span><span>250</span><span>500</span><span>750</span><span>1000</span>
         </div>
+      </div>
+      <div class="task-bar" id="task-bar" style="display:none">
+        <span class="task-label">TASK</span>
+        <span class="task-text" id="task-text"></span>
+        <span class="task-bonus" id="task-bonus"></span>
+        <button class="task-skip" id="task-skip">SKIP (-2)</button>
       </div>
       <div class="narration-bar">
         <div class="narration-indicator">
@@ -91,6 +92,7 @@
           <span class="narration-label">SILAS</span>
         </div>
         <div class="narration-text" id="narration-text">Awaiting transmission...</div>
+        <div class="voice-status" id="voice-status"></div>
       </div>
     </div>
   </div>
@@ -99,17 +101,17 @@
   <div id="gameover-screen">
     <div class="gameover-content">
       <div class="gameover-header">
-        <div class="gameover-title" id="go-title">TRANSMUTATION COMPLETE</div>
+        <div class="gameover-title" id="go-title">ABSOLUTE W</div>
         <div class="gameover-divider"></div>
       </div>
 
       <div class="gameover-rank-display">
-        <div class="gameover-rank rank-Bronze" id="go-rank">Bronze</div>
+        <div class="gameover-rank rank-Basic" id="go-rank">Basic</div>
       </div>
 
       <div class="gameover-score-area">
         <div class="gameover-score" id="go-score">0</div>
-        <div class="gameover-score-label">ESSENCE COLLECTED</div>
+        <div class="gameover-score-label">VIBES COLLECTED</div>
       </div>
 
       <div class="gameover-stats">
@@ -121,15 +123,14 @@
           <div class="stat-value" id="go-multiplier">1x</div>
           <div class="stat-label">TOP MULTI</div>
         </div>
+        <div class="stat-card">
+          <div class="stat-value" id="go-tasks">0</div>
+          <div class="stat-label">TASKS DONE</div>
+        </div>
       </div>
 
-      <button id="replay-btn" class="btn-secondary">PLAY AGAIN</button>
+      <button id="replay-btn" class="btn-secondary">RUN IT BACK</button>
     </div>
-
-    <div class="corner-decor top-left"></div>
-    <div class="corner-decor top-right"></div>
-    <div class="corner-decor bottom-left"></div>
-    <div class="corner-decor bottom-right"></div>
   </div>
 
   <script src="/static/app.js"></script>

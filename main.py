@@ -1,4 +1,4 @@
-"""Social Alchemist — Kindness Speedrun game server."""
+"""JOYBAIT — spread the love game server."""
 
 import asyncio
 import json
@@ -157,13 +157,12 @@ if __name__ == "__main__":
     app = create_app()
     app.on_startup.append(_start_stdin_reader)
     app.on_cleanup.append(_stop_stdin_reader)
-    print(f"\n  SOCIAL ALCHEMIST — Kindness Speedrun")
+    print(f"\n  JOYBAIT — spread the love")
     print(f"  Server: http://{HOST}:{PORT}")
     print(f"  Open on phone: http://<your-ip>:{PORT}")
     print()
     print("  Routes:")
-    print("    /      — Game (Kindness Speedrun)")
-    print("    /chat  — Gemini Voice + Vision Chat")
+    print("    /      — JOYBAIT")
     print()
     print("  Cloudflare: run 'cloudflared tunnel --url http://localhost:8080'")
     print("  Type 'help' for terminal commands.\n")

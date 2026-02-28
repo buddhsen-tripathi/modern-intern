@@ -1,10 +1,10 @@
-"""All constants for Social Alchemist."""
+"""All constants for JOYBAIT."""
 
 import os
 
 # Server
 HOST = "0.0.0.0"
-PORT = 8080
+PORT = int(os.environ.get("PORT", 8080))
 
 # Gemini
 GEMINI_MODEL = "gemini-2.5-flash-native-audio-preview-12-2025"
@@ -23,20 +23,33 @@ MUSIC_SAMPLE_RATE = 48000
 
 # VAD
 VAD_AGGRESSIVENESS = 3
-SPEECH_ONSET_SEC = 0.5
-SILENCE_TIMEOUT_SEC = 2.0
+SPEECH_ONSET_SEC = 0.3
+SILENCE_TIMEOUT_SEC = 1.5
 VAD_CHUNK_SIZE = 480  # 30ms at 16kHz
+
+# Game Brain (long-context memory model)
+BRAIN_MODEL = "gemini-2.5-flash"
+BRAIN_UPDATE_INTERVAL = 10  # seconds between context syncs
+BRAIN_MAX_HISTORY = 100  # max events in rolling history
 
 # Game
 GAME_DURATION = 180  # 3 minutes
-NUDGE_INTERVAL = 15
+NUDGE_RESUME_DELAY = 5  # seconds after player stops talking before nudger resumes
+IDLE_PENALTY_TIMEOUT = 10  # seconds without scoring before idle penalty
+IDLE_PENALTY_POINTS = 3
+
+# Adaptive nudge intervals (event-driven)
+NUDGE_IDLE_INTERVAL = 8  # when player is idle
+NUDGE_ACTIVE_INTERVAL = 20  # when player is socializing
+NUDGE_POST_TASK_DELAY = 5  # after task completion
+NUDGE_FINAL_MINUTE_INTERVAL = 12
 
 # Rank thresholds
 RANK_THRESHOLDS = [
-    ("Platinum", 700),
-    ("Gold", 400),
-    ("Silver", 200),
-    ("Bronze", 0),
+    ("Goated", 700),
+    ("Fire", 400),
+    ("Valid", 200),
+    ("Basic", 0),
 ]
 
 # WebSocket binary tags (phone → server)
