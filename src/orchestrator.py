@@ -40,13 +40,7 @@ class Orchestrator:
         )
         self.gemini.set_game_state_fn(self.game.to_dict)
 
-        # Wire Game Brain callbacks (parallel scoring pipeline)
-        self.brain.set_callbacks(
-            on_score=self._on_brain_score,
-            on_penalize=self._on_brain_penalize,
-            on_music=self._on_music,
-            on_task=self._on_task,
-        )
+        # Brain is passive memory — no scoring callbacks
         self.brain.set_game_state_fn(self.game.to_dict)
 
         # Give Gemini access to brain for contextual nudges and reconnect
@@ -108,22 +102,14 @@ class Orchestrator:
         self.brain.record_observation(text)
 
     async def _on_score(self, action: str, points: int, description: str):
-        """Score from Live API tags (fallback path)."""
+        """Score from Live API tags — single scoring pipeline."""
         self.game.score(action, points, description)
         self.brain.record_score(action, points, description)
 
-    async def _on_brain_score(self, action: str, points: int, description: str):
-        """Score from Game Brain analysis (primary path)."""
-        self.game.score(action, points, description)
-
     async def _on_penalize(self, action: str, points: int):
-        """Penalty from Live API tags (fallback path)."""
+        """Penalty from Live API tags — single scoring pipeline."""
         self.game.penalize(action, points)
         self.brain.record_penalty(action, points)
-
-    async def _on_brain_penalize(self, action: str, points: int):
-        """Penalty from Game Brain analysis (primary path)."""
-        self.game.penalize(action, points)
 
     async def _on_music(self, mood: str):
         await self.lyria.set_mood(mood)

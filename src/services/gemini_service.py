@@ -602,28 +602,11 @@ class GeminiService:
                         await asyncio.sleep(1)
                         continue
 
-                # Try to get a contextual nudge from the brain
-                full_prompt = None
-                if self._brain:
-                    idle_dur = time.monotonic() - self._last_score_time if self._last_score_time else 0
-                    try:
-                        nudge_result = await self._brain.generate_nudge(
-                            player_interacted=self._player_interacted,
-                            idle_duration=idle_dur,
-                        )
-                        if nudge_result and nudge_result.get("prompt"):
-                            full_prompt = nudge_result["prompt"]
-                            if nudge_result.get("tags_only"):
-                                full_prompt = f"TAGS ONLY. {full_prompt}"
-                    except Exception as e:
-                        log.error(f"Brain nudge generation failed: {e}")
-
-                # Fallback to static prompts if brain didn't produce one
-                if not full_prompt:
-                    prompts = TAGS_ONLY_PROMPTS if self._player_interacted else NARRATE_PROMPTS
-                    prompt = prompts[idx % len(prompts)]
-                    context = self._build_nudge_context()
-                    full_prompt = f"{context}\n\n{prompt}" if context else prompt
+                # Build nudge: static prompt enriched with brain context (no API call)
+                prompts = TAGS_ONLY_PROMPTS if self._player_interacted else NARRATE_PROMPTS
+                prompt = prompts[idx % len(prompts)]
+                context = self._build_nudge_context()
+                full_prompt = f"{context}\n\n{prompt}" if context else prompt
 
                 log.info("Nudge (trigger=nudge): %s", full_prompt[:120])
                 try:

@@ -1,15 +1,13 @@
-"""Game Brain — long-context Flash model for game memory and scoring decisions."""
+"""Game Brain — passive memory service for game context and reconnect restoration."""
 
-import asyncio
 import json
 import logging
 import time
-from typing import Optional
 
 from google import genai
 from google.genai import types
 
-from src.config import BRAIN_MAX_HISTORY, BRAIN_MODEL, BRAIN_UPDATE_INTERVAL
+from src.config import BRAIN_MAX_HISTORY, BRAIN_MODEL
 
 log = logging.getLogger(__name__)
 
@@ -56,72 +54,6 @@ SCORING RULES:
 
 Be accurate and conservative with scoring. Only score actions you can verify
 through audio and/or visual scene evidence.
-"""
-
-SCORE_ANALYSIS_PROMPT = """\
-Analyze these recent observations from the game and return scoring decisions.
-
-Remember: the camera faces OUTWARD (rear camera). Observations describe what the
-player sees in front of them and what is heard on their mic. The player is NOT
-visible. Infer player actions from audio cues + scene context.
-
-Current game state:
-{game_state}
-
-Recent observations (newest first):
-{observations}
-
-Player interaction history summary:
-{history_summary}
-
-Respond with ONLY valid JSON:
-{{
-  "scores": [
-    {{"action": "action_type", "points": N, "description": "what happened"}}
-  ],
-  "penalties": [
-    {{"action": "action_type", "points": N}}
-  ],
-  "mood": "mood_name or null if no change needed",
-  "task": {{"text": "task description", "bonus": N}} or null,
-  "observations_summary": "1-2 sentence summary of what just happened"
-}}
-
-Return empty arrays if no scoring events detected. Be conservative — only
-score actions verifiable through audio evidence and/or visual scene context.
-Tasks should be audio-verifiable (speak, ask, tell, laugh — not smile, wave, gesture).
-"""
-
-NUDGE_GENERATION_PROMPT = """\
-Generate a contextual nudge prompt for the game's AI narrator (Silas).
-
-Remember: Silas sees the outward-facing rear camera (surroundings, other people)
-and hears the player's mic. The player is NOT visible. Nudges should reference
-what can be SEEN (people, places) and HEARD (voices, conversation, silence).
-
-Current game state:
-{game_state}
-
-Player interaction history:
-{history_summary}
-
-Current situation:
-{situation}
-
-Player has interacted at least once: {player_interacted}
-Time since last score: {idle_duration}s
-
-Generate a nudge that Silas should act on. If the player has been idle,
-suggest specific actions referencing people or opportunities visible in the scene.
-If active, keep it brief. Tasks should be audio-verifiable (speak, ask, laugh —
-not gesture, wave, smile).
-
-Respond with ONLY valid JSON:
-{{
-  "prompt": "the nudge text for Silas",
-  "tags_only": true/false,
-  "suggested_interval": N (seconds until next nudge)
-}}
 """
 
 CONTEXT_RESTORE_PROMPT = """\
@@ -173,33 +105,11 @@ class GameBrainService:
         # Rolling event history
         self._history: list[GameEvent] = []
 
-        # Pending observations from Live API (raw narration text, scene descriptions)
-        self._pending_observations: list[str] = []
-
         # Structured summaries
         self._history_summary: str = "No interactions yet."
-        self._social_graph: dict[str, list[str]] = {}  # person_desc -> [interactions]
-
-        # Background sync task
-        self._sync_task: Optional[asyncio.Task] = None
-
-        # Callbacks
-        self._on_score = None
-        self._on_penalize = None
-        self._on_music = None
-        self._on_task = None
 
         # Game state reference
         self._game_state_fn = None
-
-        # Last scoring analysis time
-        self._last_analysis_time = 0.0
-
-    def set_callbacks(self, on_score=None, on_penalize=None, on_music=None, on_task=None):
-        self._on_score = on_score
-        self._on_penalize = on_penalize
-        self._on_music = on_music
-        self._on_task = on_task
 
     def set_game_state_fn(self, fn):
         self._game_state_fn = fn
@@ -209,29 +119,19 @@ class GameBrainService:
         _session_start = time.monotonic()
         self._running = True
         self._history.clear()
-        self._pending_observations.clear()
         self._history_summary = "No interactions yet."
-        self._social_graph.clear()
-        self._last_analysis_time = time.monotonic()
-        self._sync_task = asyncio.create_task(self._sync_loop())
         log.info("Game Brain started (model=%s)", BRAIN_MODEL)
 
     async def stop(self):
         self._running = False
-        if self._sync_task:
-            self._sync_task.cancel()
-            try:
-                await self._sync_task
-            except asyncio.CancelledError:
-                pass
 
     # -- Event recording (called by orchestrator) --
 
     def record_observation(self, text: str):
         """Record a raw observation from the Live API narration."""
-        self._pending_observations.append(text)
         self._history.append(GameEvent("observation", {"text": text}))
         self._trim_history()
+        self._update_summary(text)
 
     def record_score(self, action: str, points: int, description: str):
         self._history.append(GameEvent("score", {
@@ -263,109 +163,12 @@ class GameBrainService:
         if len(self._history) > BRAIN_MAX_HISTORY:
             self._history = self._history[-BRAIN_MAX_HISTORY:]
 
-    # -- Scoring analysis (called periodically or on-demand) --
-
-    async def analyze_and_score(self) -> Optional[dict]:
-        """Analyze pending observations and return scoring decisions."""
-        if not self._pending_observations:
-            return None
-
-        observations = list(self._pending_observations)
-        self._pending_observations.clear()
-
-        game_state = self._game_state_fn() if self._game_state_fn else {}
-
-        prompt = SCORE_ANALYSIS_PROMPT.format(
-            game_state=json.dumps(game_state, indent=2),
-            observations="\n".join(f"- {o}" for o in reversed(observations)),
-            history_summary=self._history_summary,
-        )
-
-        try:
-            response = await self._client.aio.models.generate_content(
-                model=BRAIN_MODEL,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    system_instruction=BRAIN_SYSTEM_PROMPT,
-                    temperature=0.3,
-                    response_mime_type="application/json",
-                ),
-            )
-
-            result = json.loads(response.text)
-            self._last_analysis_time = time.monotonic()
-
-            # Update history summary from brain's analysis
-            if result.get("observations_summary"):
-                self._history_summary = result["observations_summary"]
-
-            # Dispatch scoring events
-            await self._dispatch_scoring(result)
-
-            return result
-
-        except Exception as e:
-            log.error("Game Brain analysis error: %s", e)
-            # Put observations back so they aren't lost
-            self._pending_observations = observations + self._pending_observations
-            return None
-
-    async def _dispatch_scoring(self, result: dict):
-        """Dispatch scoring decisions from brain analysis to game state."""
-        for score in result.get("scores", []):
-            if self._on_score:
-                await self._on_score(
-                    score["action"],
-                    score["points"],
-                    score.get("description", ""),
-                )
-
-        for penalty in result.get("penalties", []):
-            if self._on_penalize:
-                await self._on_penalize(penalty["action"], penalty["points"])
-
-        mood = result.get("mood")
-        if mood and self._on_music:
-            await self._on_music(mood)
-
-        task = result.get("task")
-        if task and self._on_task:
-            await self._on_task(task["text"], task["bonus"])
-
-    # -- Nudge generation --
-
-    async def generate_nudge(self, player_interacted: bool, idle_duration: float) -> Optional[dict]:
-        """Generate a contextual nudge prompt for the Live API narrator."""
-        game_state = self._game_state_fn() if self._game_state_fn else {}
-
-        # Build situation from recent observations
-        recent = [e for e in self._history[-5:] if e.event_type == "observation"]
-        situation = "\n".join(f"- {e.data['text']}" for e in recent) or "No recent observations."
-
-        prompt = NUDGE_GENERATION_PROMPT.format(
-            game_state=json.dumps(game_state, indent=2),
-            history_summary=self._history_summary,
-            situation=situation,
-            player_interacted=player_interacted,
-            idle_duration=round(idle_duration, 1),
-        )
-
-        try:
-            response = await self._client.aio.models.generate_content(
-                model=BRAIN_MODEL,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    system_instruction=BRAIN_SYSTEM_PROMPT,
-                    temperature=0.5,
-                    response_mime_type="application/json",
-                ),
-            )
-
-            return json.loads(response.text)
-
-        except Exception as e:
-            log.error("Game Brain nudge generation error: %s", e)
-            return None
+    def _update_summary(self, observation: str):
+        """Keep a rolling plain-text summary from observations (no API call)."""
+        # Simple heuristic: keep last few observations as the summary
+        recent_obs = [e for e in self._history[-5:] if e.event_type == "observation"]
+        if recent_obs:
+            self._history_summary = " | ".join(e.data["text"] for e in recent_obs)
 
     # -- Context restoration (for reconnects) --
 
@@ -422,15 +225,3 @@ class GameBrainService:
 
         return " | ".join(parts)
 
-    # -- Background sync loop --
-
-    async def _sync_loop(self):
-        """Periodically analyze pending observations and update context."""
-        await asyncio.sleep(BRAIN_UPDATE_INTERVAL)
-        try:
-            while self._running:
-                if self._pending_observations:
-                    await self.analyze_and_score()
-                await asyncio.sleep(BRAIN_UPDATE_INTERVAL)
-        except asyncio.CancelledError:
-            pass

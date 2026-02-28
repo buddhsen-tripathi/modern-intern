@@ -29,8 +29,7 @@ VAD_CHUNK_SIZE = 480  # 30ms at 16kHz
 
 # Game Brain (long-context memory model)
 BRAIN_MODEL = "gemini-2.5-flash"
-BRAIN_UPDATE_INTERVAL = 10  # seconds between context syncs
-BRAIN_MAX_HISTORY = 100  # max events in rolling history
+BRAIN_MAX_HISTORY = 200  # max events to keep in brain memory
 
 # Game
 GAME_DURATION = 180  # 3 minutes
