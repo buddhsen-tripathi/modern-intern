@@ -7,11 +7,15 @@ requires-python = ">=3.11"
 dependencies = [
     "google-genai>=1.52.0",
     "aiohttp",
+    "python-dotenv",
+    "webrtcvad-wheels>=2.0.14",
+]
+
+[project.optional-dependencies]
+local = [
     "pyaudio",
     "opencv-python",
     "even-glasses",
-    "python-dotenv",
-    "webrtcvad-wheels>=2.0.14",
     "openwakeword>=0.6.0",
     "onnxruntime>=1.24.2",
 ]

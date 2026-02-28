@@ -1,0 +1,16 @@
+services:
+  silas:
+    build: .
+    container_name: silas-game
+    restart: unless-stopped
+    ports:
+      - "${PORT:-8080}:8080"
+    env_file:
+      - .env
+    environment:
+      - PORT=8080
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

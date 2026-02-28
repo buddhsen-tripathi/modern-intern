@@ -1,28 +1,35 @@
-FROM python:3.11-slim
+FROM python:3.11-slim AS builder
 
-# Install system deps for pyaudio and webrtcvad
+# System deps needed to compile webrtcvad C extension
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    portaudio19-dev \
-    gcc \
-    libc6-dev \
+    gcc libc6-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Install uv for fast dependency resolution
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
-# Copy dependency files first for layer caching
+# Copy dependency files for layer caching
 COPY pyproject.toml uv.lock ./
 
-# Install dependencies (no dev deps, frozen lockfile)
+# Install deps (frozen lockfile, no dev)
 RUN uv sync --frozen --no-dev
 
-# Copy application code
+# ---------- runtime ----------
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Copy virtualenv + app from builder
+COPY --from=builder /app/.venv /app/.venv
 COPY . .
 
-# Expose the game server port
+ENV PATH="/app/.venv/bin:$PATH"
+ENV PYTHONUNBUFFERED=1
+
 EXPOSE 8080
 
-# Run with the virtual environment python
-CMD ["uv", "run", "python", "main.py"]
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8080/')" || exit 1
+
+CMD ["python", "main.py"]
