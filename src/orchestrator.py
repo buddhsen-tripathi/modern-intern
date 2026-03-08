@@ -51,6 +51,7 @@ class Orchestrator:
         # Note recording state
         self._note_recording = False
         self._note_buffer: list[str] = []
+        self._skip_next_narration = False
 
         # Recent observations for agent context
         self._observations: list[str] = []
@@ -90,6 +91,10 @@ class Orchestrator:
 
     async def _on_narration_text(self, text: str):
         await self.display.send_narration_text(text)
+        # Skip Gemini's confirmation after note_start so it's not captured
+        if self._skip_next_narration:
+            self._skip_next_narration = False
+            return
         # Feed to meeting agent if recording
         self._meeting_agent.add_entry(text)
         # Buffer narration while note is recording
@@ -110,21 +115,18 @@ class Orchestrator:
             if self._note_recording:
                 log.info("Note recording already active")
                 return
+            # Skip the next narration so Gemini's confirmation isn't captured as note content
+            self._skip_next_narration = True
             self._note_recording = True
             self._note_buffer.clear()
             log.info(">>> NOTE RECORDING STARTED")
-            note_start_result = {
-                "status": "success",
-                "message": "Recording note... say 'note end' when done.",
-            }
             await self.display.send_event({
                 "type": "action_result",
                 "action": "note_start",
                 "agent": "Notes",
-                **note_start_result,
+                "status": "success",
+                "message": "Recording note... say 'note end' when done.",
             })
-            await self.discord.send_action_result("note_start", note_start_result)
-            await self.gemini.send_prompt("Go ahead, I'm listening.")
             return
 
         if action_type == "note_stop":
@@ -195,6 +197,17 @@ class Orchestrator:
         msg = result.get("message", "Done.")
         log.info("Agent result: %s", msg)
 
+        # Validation errors — ask user for missing info, don't send to Discord
+        if result.get("status") == "error" and result.get("error_type"):
+            await self.display.send_event({
+                "type": "action_result",
+                "action": action_type,
+                "agent": agent.name,
+                **result,
+            })
+            await self.gemini.send_prompt(msg)
+            return
+
         # Send result to display
         await self.display.send_event({
             "type": "action_result",
@@ -203,8 +216,9 @@ class Orchestrator:
             **result,
         })
 
-        # Send to Telegram
-        await self.discord.send_action_result(action_type, result)
+        # Send to Discord (only successful results)
+        if result.get("status") == "success":
+            await self.discord.send_action_result(action_type, result)
 
         # Have Silas speak the result aloud
         await self.gemini.send_prompt(msg)

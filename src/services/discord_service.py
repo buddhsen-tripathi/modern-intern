@@ -68,16 +68,13 @@ class DiscordService:
 
 def _format_note(action: str, result: dict) -> str:
     status = result.get("status", "")
-    msg = result.get("message", "")
-    total = result.get("total_notes", "")
-    if status == "error":
+    content = result.get("content", "")
+    if status == "error" or not content:
         return ""
-    return f"**Note Saved**\n{msg}\n*Total notes: {total}*"
+    return content
 
 
 def _format_note_start(action: str, result: dict) -> str:
-    if result.get("status") == "success":
-        return "**Note Recording Started**\nListening..."
     return ""
 
 
@@ -94,17 +91,21 @@ def _format_meeting(action: str, result: dict) -> str:
 
 
 def _format_email(action: str, result: dict) -> str:
-    status = result.get("status", "")
-    msg = result.get("message", "")
-    if status == "error":
+    if result.get("status") != "success":
         return ""
-    titles = {
-        "draft_email": "Email Drafted",
-        "send_email": "Email Sent",
-        "read_email": "Email Read",
-    }
-    title = titles.get(action, "Email")
-    return f"**{title}**\n{msg}"
+    draft = result.get("draft")
+    if action == "draft_email" and draft:
+        lines = [f"**To:** {draft['to']}"]
+        if draft.get("subject"):
+            lines.append(f"**Subject:** {draft['subject']}")
+        if draft.get("body"):
+            lines.append(draft["body"])
+        return "\n".join(lines)
+    elif action == "send_email":
+        return result.get("message", "")
+    elif action == "read_email":
+        return result.get("message", "")
+    return ""
 
 
 def _format_calendar(action: str, result: dict) -> str:

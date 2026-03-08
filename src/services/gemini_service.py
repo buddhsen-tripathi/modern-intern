@@ -34,21 +34,31 @@ CRITICAL RULES:
 3. Be natural and conversational, but always brief.
 
 ─── VOICE COMMANDS ────────────────────────────────────────
-When user speaks a command, say "ACTION: <type>" with details:
+When user speaks a command, say "ACTION: <type>" followed by structured details.
+
+NOTES:
 • "ACTION: note start." — user says "take note" or "start note"
-• "ACTION: note stop." — user says "note end", "stop note", or "done"
+• "ACTION: note stop." — user says "note end", "stop note", "done"
 • "ACTION: note. Buy groceries." — quick one-shot note
-• "ACTION: draft email. To John, subject update, body let's meet Friday."
+
+EMAIL (always include to/subject/body fields):
+• "ACTION: draft email. to: John, subject: project update, body: let's meet Friday."
+• "ACTION: send email." — sends the current draft (must have one)
+• "ACTION: read email." — reads recent emails
+If user says "draft email to Sarah about lunch" → "ACTION: draft email. to: Sarah, subject: lunch, body: let's grab lunch."
+If user gives incomplete info like "draft email about the meeting" (no recipient) → ask "Who should I send it to?" Do NOT fire ACTION without a recipient.
+
+CALENDAR:
 • "ACTION: calendar event. Standup tomorrow 10am."
+
+MEETINGS:
 • "ACTION: meeting minutes start." / "ACTION: meeting minutes stop."
-• "ACTION: send email." / "ACTION: read email."
 
-IMPORTANT for notes:
-- If user says "take note", "start note", "begin note" → say "ACTION: note start."
-- If user says "note end", "stop note", "done with note", "that's it" → say "ACTION: note stop."
-- If user says "note: buy milk" (short, all at once) → say "ACTION: note. buy milk."
-
-Then a brief confirmation like "Got it" or "Done". Nothing more.
+RULES:
+- For draft email: ALWAYS include "to:", "subject:", and "body:" fields.
+- NEVER fire "ACTION: draft email" without a recipient — ask the user first.
+- NEVER fire "ACTION: send email" if no draft exists — say "No draft to send."
+- After each ACTION, say a brief confirmation. Nothing more.
 
 ─── CONVERSATION ──────────────────────────────────────────
 You can also have brief natural conversations with the user.
@@ -440,7 +450,7 @@ class GeminiService:
         elif action == "meeting_minutes_stop":
             return {"command": "stop"}
         elif action == "draft_email":
-            return {"to": "", "subject": "", "body": spoken_content}
+            return self._parse_email_fields(spoken_content)
         elif action == "send_email":
             return {}
         elif action == "read_email":
@@ -448,3 +458,27 @@ class GeminiService:
         elif action == "calendar_event":
             return {"title": spoken_content[:60]} if spoken_content else {}
         return {}
+
+    def _parse_email_fields(self, text: str) -> dict:
+        """Parse 'to: X, subject: Y, body: Z' from spoken content."""
+        result = {"to": "", "subject": "", "body": ""}
+        if not text:
+            return result
+
+        # Try structured parsing: "to: John, subject: update, body: let's meet"
+        to_match = re.search(r"to:\s*([^,]+)", text, re.IGNORECASE)
+        subj_match = re.search(r"subject:\s*([^,]+?)(?:,\s*body:|$)", text, re.IGNORECASE)
+        body_match = re.search(r"body:\s*(.+)", text, re.IGNORECASE)
+
+        if to_match:
+            result["to"] = to_match.group(1).strip().rstrip(".")
+        if subj_match:
+            result["subject"] = subj_match.group(1).strip().rstrip(".")
+        if body_match:
+            result["body"] = body_match.group(1).strip().rstrip(".")
+
+        # Fallback: if no structured fields found, dump everything as body
+        if not result["to"] and not result["subject"] and not result["body"]:
+            result["body"] = text
+
+        return result

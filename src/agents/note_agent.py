@@ -30,6 +30,7 @@ class NoteAgent(BaseAgent):
         return {
             "status": "success",
             "message": f"Note saved: {content[:60]}",
+            "content": content,
             "total_notes": len(self._notes),
         }
 
