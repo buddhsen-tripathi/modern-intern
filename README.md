@@ -1,14 +1,11 @@
 # Modern Intern
 
-<!--
-  CONTRIBUTORS
-  ────────────
+CONTRIBUTORS
+────────────
 Buddhsen Tripathi
 Esparance Tuyishime
 Olivia Iarmak
 
- 
--->
 
 A voice-only AI personal assistant powered by Google Gemini 2.5 Flash Live API. Speak commands, get things done — notes, emails, meetings, and more — all through natural voice interaction.
 
