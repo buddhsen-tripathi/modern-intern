@@ -1,82 +1,71 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 
 const ACTION_LABELS = {
-  note: 'Note saved',
-  note_start: 'Recording note',
-  note_stop: 'Note saved',
-  meeting_minutes: 'Meeting minutes',
-  draft_email: 'Email drafted',
-  send_email: 'Email sent',
-  read_email: 'Reading email',
-  calendar_event: 'Event created',
+  note: 'NOTE SAVED',
+  note_start: 'NOTE REC STARTED',
+  note_stop: 'NOTE SAVED',
+  meeting_minutes: 'MEETING MINUTES',
+  draft_email: 'EMAIL DRAFTED',
+  send_email: 'EMAIL SENT',
+  read_email: 'EMAIL READ',
+  calendar_event: 'EVENT CREATED',
 }
 
-const FEED_ICONS = {
-  note: '\uD83D\uDCDD',
-  note_start: '\uD83D\uDCDD',
-  meeting_minutes: '\uD83D\uDCCB',
-  draft_email: '\u2709\uFE0F',
-  send_email: '\uD83D\uDCE8',
-  read_email: '\uD83D\uDCE9',
-  calendar_event: '\uD83D\uDCC5',
+const LOG_PREFIXES = {
+  note: 'NOTE',
+  note_start: 'NOTE',
+  note_stop: 'NOTE',
+  meeting_minutes: 'MEET',
+  draft_email: 'MAIL',
+  send_email: 'MAIL',
+  read_email: 'MAIL',
+  calendar_event: 'CAL',
 }
 
-function formatTime(date) {
+function formatTimestamp(date) {
   return (
     date.getHours().toString().padStart(2, '0') +
     ':' +
-    date.getMinutes().toString().padStart(2, '0')
+    date.getMinutes().toString().padStart(2, '0') +
+    ':' +
+    date.getSeconds().toString().padStart(2, '0')
   )
 }
 
-function Toast({ text, type, onDone }) {
+function LogEntry({ entry }) {
+  const levelClass = entry.level || 'info'
   return (
-    <div className={`toast toast-${type}`} onAnimationEnd={onDone}>
-      {text}
-    </div>
-  )
-}
-
-function FeedEntry({ icon, text, time, onFade }) {
-  const [fading, setFading] = useState(false)
-
-  useEffect(() => {
-    const timer = setTimeout(() => setFading(true), 30000)
-    return () => clearTimeout(timer)
-  }, [])
-
-  return (
-    <div
-      className={`feed-entry${fading ? ' fading' : ''}`}
-      onAnimationEnd={() => {
-        if (fading) onFade()
-      }}
-    >
-      <span className="feed-icon">{icon}</span>
-      <span className="feed-text">{text}</span>
-      <span className="feed-time">{time}</span>
+    <div className={`log-line log-${levelClass}`}>
+      <span className="log-ts">{entry.ts}</span>
+      <span className="log-tag">[{entry.tag}]</span>
+      <span className="log-msg">{entry.text}</span>
     </div>
   )
 }
 
 export default function HUD({ events, narration, vadState, voiceStatus, isPaused, onTogglePause }) {
-  const [toasts, setToasts] = useState([])
-  const [feed, setFeed] = useState([])
+  const [logs, setLogs] = useState(() => [
+    { id: 0, ts: formatTimestamp(new Date()), tag: 'SYS', text: 'SILAS v2.0 — voice-only mode', level: 'system' },
+    { id: 1, ts: formatTimestamp(new Date()), tag: 'SYS', text: 'Awaiting session start...', level: 'muted' },
+  ])
   const [statusLabel, setStatusLabel] = useState('ACTIVE')
   const [isRecording, setIsRecording] = useState(false)
   const lastProcessedRef = useRef(0)
+  const logIdRef = useRef(2)
+  const logEndRef = useRef(null)
+  const prevVadRef = useRef(null)
+  const prevPausedRef = useRef(isPaused)
 
-  const addToast = useCallback((text, type) => {
-    const id = Date.now() + Math.random()
-    setToasts((prev) => [...prev, { id, text, type }])
+  const addLog = useCallback((tag, text, level = 'info') => {
+    const id = logIdRef.current++
+    const ts = formatTimestamp(new Date())
+    setLogs((prev) => [...prev.slice(-80), { id, ts, tag, text, level }])
   }, [])
 
-  const addToFeed = useCallback((action, message) => {
-    const id = Date.now() + Math.random()
-    const time = formatTime(new Date())
-    const icon = FEED_ICONS[action] || '\u2022'
-    setFeed((prev) => [...prev.slice(-5), { id, icon, text: message, time }])
-  }, [])
+  // Auto-scroll log
+  useEffect(() => {
+    logEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [logs])
 
   // Process events
   useEffect(() => {
@@ -88,9 +77,15 @@ export default function HUD({ events, narration, vadState, voiceStatus, isPaused
     const event = latest
 
     if (event.type === 'action_result') {
-      const label = ACTION_LABELS[event.action] || event.action
+      const label = ACTION_LABELS[event.action] || event.action.toUpperCase()
+      const tag = LOG_PREFIXES[event.action] || 'ACT'
       const isError = event.status === 'error'
-      addToast(event.message || label, isError ? 'error' : 'success')
+
+      if (isError) {
+        addLog(tag, `ERR: ${event.message || label}`, 'error')
+      } else {
+        addLog(tag, event.message || label, 'success')
+      }
 
       if (event.action === 'note_start' && event.status === 'success') {
         setIsRecording(true)
@@ -99,29 +94,41 @@ export default function HUD({ events, narration, vadState, voiceStatus, isPaused
         setIsRecording(false)
         setStatusLabel('ACTIVE')
       }
+    }
+  }, [events, addLog])
 
-      if (!isError) {
-        addToFeed(event.action, event.message || label)
+  // Log narration
+  useEffect(() => {
+    if (narration && narration.trim()) {
+      addLog('SILAS', narration, 'narration')
+    }
+  }, [narration, addLog])
+
+  // Log VAD state changes
+  useEffect(() => {
+    if (vadState && vadState !== prevVadRef.current) {
+      prevVadRef.current = vadState
+      if (vadState === 'LISTENING') {
+        addLog('MIC', 'Voice activity detected — listening', 'info')
+      } else if (vadState === 'IDLE') {
+        addLog('MIC', 'Silence detected — idle', 'muted')
       }
     }
-  }, [events, addToast, addToFeed])
+  }, [vadState, addLog])
 
-  // Update status label when paused
+  // Log pause/resume
   useEffect(() => {
-    if (isPaused) {
-      setStatusLabel('PAUSED')
-    } else if (!isRecording) {
-      setStatusLabel('ACTIVE')
+    if (isPaused !== prevPausedRef.current) {
+      prevPausedRef.current = isPaused
+      if (isPaused) {
+        setStatusLabel('PAUSED')
+        addLog('SYS', 'Session paused', 'warn')
+      } else if (!isRecording) {
+        setStatusLabel('ACTIVE')
+        addLog('SYS', 'Session resumed', 'system')
+      }
     }
-  }, [isPaused, isRecording])
-
-  const removeToast = useCallback((id) => {
-    setToasts((prev) => prev.filter((t) => t.id !== id))
-  }, [])
-
-  const removeFeedEntry = useCallback((id) => {
-    setFeed((prev) => prev.filter((f) => f.id !== id))
-  }, [])
+  }, [isPaused, isRecording, addLog])
 
   const micListening = vadState === 'LISTENING'
 
@@ -145,29 +152,22 @@ export default function HUD({ events, narration, vadState, voiceStatus, isPaused
         </div>
       </div>
 
-      {/* Toasts */}
-      <div className="hud-mid">
-        <div className="toast-container">
-          {toasts.map((t) => (
-            <Toast key={t.id} text={t.text} type={t.type} onDone={() => removeToast(t.id)} />
+      {/* Terminal log */}
+      <div className="terminal-wrap">
+        <div className="terminal-header">
+          <span className="terminal-title">SILAS // SYSTEM LOG</span>
+          <span className="terminal-count">{logs.length} entries</span>
+        </div>
+        <div className="terminal-body">
+          {logs.map((entry) => (
+            <LogEntry key={entry.id} entry={entry} />
           ))}
+          <div ref={logEndRef} />
         </div>
       </div>
 
       {/* Bottom */}
       <div className="hud-bottom">
-        <div className="activity-feed">
-          {feed.map((f) => (
-            <FeedEntry
-              key={f.id}
-              icon={f.icon}
-              text={f.text}
-              time={f.time}
-              onFade={() => removeFeedEntry(f.id)}
-            />
-          ))}
-        </div>
-
         <div className="narration-bar">
           <div className="narration-indicator">
             <div className={`mic-indicator${micListening ? ' listening' : ''}`} />

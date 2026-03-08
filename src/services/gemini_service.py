@@ -143,6 +143,7 @@ class GeminiService:
                     )
                 )
             ),
+            output_audio_transcription=types.AudioTranscriptionConfig(),
             context_window_compression=types.ContextWindowCompressionConfig(
                 sliding_window=types.SlidingWindow(),
             ),
@@ -311,31 +312,24 @@ class GeminiService:
                         if not self._running:
                             break
 
-                        # Audio data
-                        if msg.data:
-                            if not self._gemini_speaking:
-                                self._gemini_speaking = True
-                            if self._on_audio:
-                                asyncio.create_task(self._on_audio(msg.data))
-
-                        # Text — collect from msg.text (skip thought/reasoning)
-                        if msg.text and not getattr(msg, "thought", False):
-                            text_buf += msg.text
-
-                        # Check server_content for text in model_turn parts
+                        # Check server_content for audio, transcription, turn_complete
                         if hasattr(msg, "server_content") and msg.server_content:
                             sc = msg.server_content
 
+                            # Audio data from model_turn
                             if hasattr(sc, "model_turn") and sc.model_turn:
                                 for part in (sc.model_turn.parts or []):
-                                    try:
-                                        if hasattr(part, "thought") and part.thought:
-                                            continue
-                                        if hasattr(part, "text") and part.text:
-                                            if part.text not in text_buf:
-                                                text_buf += part.text
-                                    except Exception:
-                                        pass
+                                    if hasattr(part, "inline_data") and part.inline_data:
+                                        if not self._gemini_speaking:
+                                            self._gemini_speaking = True
+                                        if self._on_audio:
+                                            asyncio.create_task(self._on_audio(part.inline_data.data))
+
+                            # Output transcription (text of what Gemini spoke)
+                            if hasattr(sc, "output_transcription") and sc.output_transcription:
+                                t = getattr(sc.output_transcription, "text", "")
+                                if t:
+                                    text_buf += t
 
                             if hasattr(sc, "turn_complete") and sc.turn_complete:
                                 self._gemini_speaking = False
