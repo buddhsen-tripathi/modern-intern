@@ -1,6 +1,7 @@
 /**
  * Silas — Gesture-Based Personal Assistant Client
  *
+ * Single tap to start. No intro phase.
  * Camera -> JPEG 1FPS -> WS
  * Mic -> 16kHz PCM -> WS (via AudioWorklet)
  * WS -> narration audio (24kHz mono) + JSON events
@@ -37,8 +38,6 @@ const ctx = canvas.getContext("2d");
 const startScreen = document.getElementById("start-screen");
 const startBtn = document.getElementById("start-btn");
 const startHint = document.getElementById("start-hint");
-const introArea = document.getElementById("intro-area");
-const introText = document.getElementById("intro-text");
 const hud = document.getElementById("hud");
 
 const statusPill = document.getElementById("status-pill");
@@ -59,9 +58,6 @@ let narrationNextTime = 0;
 let micStream = null;
 let micWorklet = null;
 let capturing = false;
-let phase = "idle"; // idle -> intro -> active
-let introAudioReceived = false;
-let introEndTimer = null;
 let gestureBadgeTimer = null;
 
 // -- Camera --
@@ -159,11 +155,14 @@ function connectWS() {
 
   ws.onopen = () => {
     console.log("[WS] Connected");
-    if (phase === "intro") {
-      ws.send(JSON.stringify({ type: "connect" }));
-      startHint.textContent = "SILAS IS CONNECTING...";
-      captureLoop();
-    }
+    // Immediately start session and camera streaming
+    ws.send(JSON.stringify({ type: "start" }));
+    capturing = true;
+    captureLoop();
+
+    // Show HUD
+    startScreen.style.display = "none";
+    hud.classList.add("active");
   };
 
   ws.onmessage = (e) => {
@@ -176,9 +175,10 @@ function connectWS() {
 
   ws.onclose = () => {
     console.log("[WS] Disconnected");
-    setTimeout(() => {
-      if (phase !== "idle") connectWS();
-    }, 2000);
+    // Reconnect if session was active
+    if (capturing) {
+      setTimeout(connectWS, 2000);
+    }
   };
 
   ws.onerror = (err) => console.error("[WS] Error", err);
@@ -190,11 +190,7 @@ function handleJSON(msg) {
       handleEvent(msg.data);
       break;
     case "narration":
-      if (phase === "intro") {
-        showIntroNarration(msg.text);
-      } else {
-        showNarration(msg.text);
-      }
+      showNarration(msg.text);
       break;
     case "vad_state":
       updateVAD(msg.state);
@@ -210,11 +206,6 @@ function handleBinary(data) {
 
   if (tag === TAG_NARRATION) {
     playNarrationChunk(int16);
-    if (phase === "intro") {
-      introAudioReceived = true;
-      clearTimeout(introEndTimer);
-      introEndTimer = setTimeout(onIntroDone, 2000);
-    }
   }
 }
 
@@ -222,15 +213,18 @@ function handleBinary(data) {
 function handleEvent(event) {
   if (event.type === "gesture") {
     showGesture(event.gesture);
+  } else if (event.type === "action_armed") {
+    showActionArmed(event);
   } else if (event.type === "action_result") {
     showActionResult(event);
+  } else if (event.type === "action_timeout") {
+    showToast(event.message || "Action timed out", "error");
   }
 }
 
 function showGesture(gesture) {
   const info = GESTURE_LABELS[gesture] || { icon: "?", label: gesture };
 
-  // Show gesture badge
   gestureBadge.classList.add("visible");
   gestureBadgeIcon.textContent = info.icon;
   gestureBadgeText.textContent = info.label;
@@ -240,16 +234,18 @@ function showGesture(gesture) {
     gestureBadge.classList.remove("visible");
   }, 3000);
 
-  // Toast
   showToast(info.icon + " " + info.label, "gesture");
+}
+
+function showActionArmed(event) {
+  const label = ACTION_LABELS[event.action] || event.action;
+  showToast(event.prompt || `${label} — speak now...`, "armed");
 }
 
 function showActionResult(event) {
   const label = ACTION_LABELS[event.action] || event.action;
   const isError = event.status === "error";
-  const toastType = isError ? "error" : "success";
-
-  showToast(event.message || label, toastType);
+  showToast(event.message || label, isError ? "error" : "success");
 
   if (!isError) {
     addToFeed(event.action, event.message || label);
@@ -295,12 +291,10 @@ function addToFeed(action, message) {
   entry.appendChild(time);
   activityFeed.appendChild(entry);
 
-  // Keep max 6 entries
   while (activityFeed.children.length > 6) {
     activityFeed.removeChild(activityFeed.firstChild);
   }
 
-  // Auto-fade after 30s
   setTimeout(() => {
     entry.classList.add("feed-fade");
     entry.addEventListener("animationend", () => entry.remove());
@@ -330,39 +324,19 @@ function updateVAD(state) {
   }
 }
 
-// -- Intro Flow --
-function showIntroNarration(text) {
-  introArea.classList.add("visible");
-  introText.textContent = text;
-  if (!introAudioReceived) {
-    clearTimeout(introEndTimer);
-    introEndTimer = setTimeout(onIntroDone, 5000);
-  }
-}
-
-function onIntroDone() {
-  startBtn.textContent = "START SESSION";
-  startBtn.disabled = false;
-  startHint.textContent = "tap to begin";
-
-  startBtn.removeEventListener("click", connectSilas);
-  startBtn.addEventListener("click", startSession);
-}
-
-// -- Start Flow --
-async function connectSilas() {
+// -- Start --
+async function startSilas() {
   startBtn.disabled = true;
-  startBtn.textContent = "CONNECTING...";
+  startBtn.textContent = "STARTING...";
   startHint.textContent = "grant camera + mic permissions...";
 
   try {
     initAudio();
     await startCamera();
-    startHint.textContent = "camera ready...";
   } catch (err) {
     alert("Camera access required: " + err.message);
     startBtn.disabled = false;
-    startBtn.textContent = "CONNECT";
+    startBtn.textContent = "START";
     startHint.textContent = "camera + mic required";
     return;
   }
@@ -377,22 +351,8 @@ async function connectSilas() {
     voiceStatus.className = "voice-status no-mic";
   }
 
-  phase = "intro";
-  introAudioReceived = false;
-  capturing = true;
   connectWS();
 }
 
-function startSession() {
-  startBtn.disabled = true;
-
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: "start" }));
-    phase = "active";
-    startScreen.style.display = "none";
-    hud.classList.add("active");
-  }
-}
-
 // -- Event Listeners --
-startBtn.addEventListener("click", connectSilas);
+startBtn.addEventListener("click", startSilas);

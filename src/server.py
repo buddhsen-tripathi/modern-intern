@@ -28,9 +28,7 @@ async def ws_handler(request: web.Request):
                 try:
                     data = json.loads(msg.data)
                     cmd = data.get("type")
-                    if cmd == "connect":
-                        await orch.connect()
-                    elif cmd == "start":
+                    if cmd == "start":
                         await orch.start_session()
                     elif cmd == "stop":
                         await orch.stop_session()

@@ -24,10 +24,9 @@ VAD_CHUNK_SIZE = 480  # 30ms at 16kHz
 # Gesture detection
 GESTURE_COOLDOWN_SEC = 3.0  # minimum gap between gesture triggers
 
-# Watcher intervals (how often Gemini checks the scene)
-WATCHER_IDLE_INTERVAL = 10
-WATCHER_ACTIVE_INTERVAL = 25
-WATCHER_RESUME_DELAY = 5  # seconds after player stops talking before watcher resumes
+# Watcher intervals (how often Gemini checks the scene for gestures)
+WATCHER_INTERVAL = 5  # seconds between gesture checks
+WATCHER_RESUME_DELAY = 3  # seconds after user stops talking before watcher resumes
 
 # WebSocket binary tags (phone -> server)
 TAG_CAMERA = 0x01

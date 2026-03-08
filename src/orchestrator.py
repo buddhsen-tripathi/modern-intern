@@ -1,4 +1,10 @@
-"""Orchestrator: central brain that routes gestures and voice commands to agents."""
+"""Orchestrator: central brain that routes gestures and voice to agents.
+
+Gestures = triggers (what to do)
+Audio/voice = content (what to do it with)
+
+Flow: gesture arms an action → Silas prompts user → user speaks → action executes.
+"""
 
 import logging
 import os
@@ -14,14 +20,23 @@ from src.services.gemini_service import GeminiService
 
 log = logging.getLogger(__name__)
 
-# Map gestures to default action types
+# Gesture → action type mapping
 GESTURE_ACTION_MAP = {
     "open_palm": "note",
     "peace_sign": "draft_email",
     "point_up": "calendar_event",
     "wave": "meeting_minutes",
     "ok_sign": "send_email",
-    "thumbs_up": None,  # confirmation only, no auto-action
+    "thumbs_up": "confirm",
+}
+
+# Prompts Silas speaks to solicit voice input after a gesture
+GESTURE_PROMPTS = {
+    "note": "Ready to take a note. What should I write down?",
+    "draft_email": "Drafting an email. Who's it for and what should it say?",
+    "calendar_event": "Creating a calendar event. What's the event and when?",
+    "send_email": None,  # immediate action, no voice input needed
+    "confirm": None,  # immediate action
 }
 
 
@@ -51,6 +66,11 @@ class Orchestrator:
             "calendar_event": self._calendar_agent,
         }
 
+        # Pending action: gesture arms it, voice completes it
+        self._pending_action: str | None = None
+        self._pending_since: float = 0.0
+        self._pending_timeout = 30.0  # seconds to wait for voice input
+
         # Gesture cooldown tracking
         self._last_gesture_time: float = 0.0
 
@@ -67,13 +87,8 @@ class Orchestrator:
             on_vad_state=self._on_vad_state,
         )
 
-    async def connect(self):
-        """Connect to Gemini and play intro."""
-        if self.gemini.connected:
-            return
-        await self.gemini.connect()
-
     async def start_session(self):
+        """Connect to Gemini and start watching — single step, no intro."""
         if self._started:
             return
         self._started = True
@@ -84,6 +99,7 @@ class Orchestrator:
         if not self._started and not self.gemini.connected:
             return
         self._started = False
+        self._pending_action = None
         log.info("Stopping session...")
         await self.gemini.stop()
 
@@ -114,39 +130,78 @@ class Orchestrator:
             return
         self._last_gesture_time = now
 
-        log.info("Gesture detected: %s", gesture)
+        action_type = GESTURE_ACTION_MAP.get(gesture)
+        if not action_type:
+            log.info("Unknown gesture: %s", gesture)
+            return
+
+        log.info("Gesture detected: %s → %s", gesture, action_type)
         await self.display.send_event({
             "type": "gesture",
             "gesture": gesture,
+            "action": action_type,
         })
 
-        # Auto-trigger default action for gesture (if no explicit ACTION tag follows)
-        action_type = GESTURE_ACTION_MAP.get(gesture)
-        if action_type:
-            # Build context-aware params from recent observations
-            context_text = " ".join(self._observations[-5:]) if self._observations else ""
-            params = self._build_gesture_params(action_type, context_text)
-            await self._on_action(action_type, params)
-
-    def _build_gesture_params(self, action_type: str, context: str) -> dict:
-        """Build reasonable default params for gesture-triggered actions."""
-        if action_type == "note":
-            return {"content": context or "Note taken via gesture."}
-        elif action_type == "meeting_minutes":
-            # Toggle: start if not recording, stop if recording
+        # Meeting minutes: toggle immediately (no voice input needed)
+        if action_type == "meeting_minutes":
             cmd = "stop" if self._meeting_agent.recording else "start"
-            return {"command": cmd}
-        elif action_type == "draft_email":
-            return {"to": "", "subject": "", "body": context}
-        elif action_type == "send_email":
-            return {}
-        elif action_type == "calendar_event":
-            return {"title": context[:60] if context else "New Event"}
-        return {}
+            await self._execute_action("meeting_minutes", {"command": cmd})
+            return
+
+        # Send/confirm: execute immediately
+        if action_type in ("send_email", "confirm"):
+            await self._execute_action(action_type, {})
+            return
+
+        # For note, email, calendar: arm the action and wait for voice
+        prompt = GESTURE_PROMPTS.get(action_type)
+        self._pending_action = action_type
+        self._pending_since = now
+        log.info("Action armed: %s — waiting for voice input", action_type)
+
+        await self.display.send_event({
+            "type": "action_armed",
+            "action": action_type,
+            "prompt": prompt,
+        })
+
+        # Tell Gemini to prompt the user for input
+        if prompt:
+            await self.gemini.send_prompt(prompt)
 
     async def _on_action(self, action_type: str, params: dict):
+        """Called when Gemini emits an <<ACTION>> tag (from voice command or
+        after a gesture+voice sequence)."""
+
+        # If there's a pending gesture-armed action, the voice input fills it
+        if self._pending_action:
+            elapsed = time.monotonic() - self._pending_since
+            if elapsed < self._pending_timeout:
+                armed = self._pending_action
+                self._pending_action = None
+                log.info("Pending action %s fulfilled with voice params", armed)
+                await self._execute_action(armed, params)
+                return
+            else:
+                log.info("Pending action %s expired", self._pending_action)
+                self._pending_action = None
+
+        # Direct voice command (no gesture needed)
+        await self._execute_action(action_type, params)
+
+    async def _execute_action(self, action_type: str, params: dict):
         agent = self._agents.get(action_type)
         if not agent:
+            # Handle confirm separately
+            if action_type == "confirm":
+                log.info("Confirm acknowledged")
+                await self.display.send_event({
+                    "type": "action_result",
+                    "action": "confirm",
+                    "status": "success",
+                    "message": "Confirmed.",
+                })
+                return
             log.warning("No agent for action: %s", action_type)
             return
 
@@ -169,7 +224,6 @@ class Orchestrator:
         result = await agent.execute(params, context)
         log.info("Agent result: %s", result.get("message", ""))
 
-        # Send result to display
         await self.display.send_event({
             "type": "action_result",
             "action": action_type,
@@ -180,6 +234,17 @@ class Orchestrator:
     async def _on_vad_state(self, state: str):
         await self.display.send_vad_state(state)
 
+        # If pending action timed out, clear it
+        if self._pending_action:
+            elapsed = time.monotonic() - self._pending_since
+            if elapsed >= self._pending_timeout:
+                log.info("Pending action %s timed out", self._pending_action)
+                self._pending_action = None
+                await self.display.send_event({
+                    "type": "action_timeout",
+                    "message": "Action cancelled — no voice input received.",
+                })
+
     # -- Terminal command helpers --
 
     async def inject_narration(self, text: str):
@@ -188,6 +253,7 @@ class Orchestrator:
     def get_status(self) -> dict:
         return {
             "started": self._started,
+            "pending_action": self._pending_action,
             "meeting_recording": self._meeting_agent.recording,
             "notes_count": len(self._note_agent.get_notes()),
             "events_count": len(self._calendar_agent.get_events()),
