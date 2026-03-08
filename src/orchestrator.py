@@ -63,6 +63,7 @@ class Orchestrator:
             on_narration=self._on_narration_text,
             on_action=self._on_action,
             on_vad_state=self._on_vad_state,
+            on_user_speech=self._on_user_speech,
         )
 
     async def start_session(self):
@@ -95,11 +96,39 @@ class Orchestrator:
         if self._skip_next_narration:
             self._skip_next_narration = False
             return
-        # Feed to meeting agent if recording
-        self._meeting_agent.add_entry(text)
+        # Feed assistant speech to meeting agent (skip meta-comments)
+        if not self._is_meta_comment(text):
+            self._meeting_agent.add_entry(text, speaker="assistant")
         # Buffer narration while note is recording
         if self._note_recording and text.strip():
             self._note_buffer.append(text.strip())
+
+    async def _on_user_speech(self, text: str):
+        """Called when user's speech is transcribed."""
+        log.info("User said: %s", text[:200])
+        # Feed user speech to meeting agent
+        self._meeting_agent.add_entry(text, speaker="user")
+        # Buffer user speech while note is recording
+        if self._note_recording and text.strip():
+            self._note_buffer.append(text.strip())
+
+    @staticmethod
+    def _is_meta_comment(text: str) -> bool:
+        """Filter out Gemini's meta-comments about its own process."""
+        lower = text.lower().strip()
+        meta_phrases = (
+            "started taking meeting",
+            "i've started",
+            "i will transcribe",
+            "please continue",
+            "i'm listening",
+            "go ahead",
+            "recording meeting",
+            "taking minutes",
+            "meeting minutes ready",
+            "action:",
+        )
+        return any(p in lower for p in meta_phrases)
         # Track observations for agent context
         self._observations.append(text)
         if len(self._observations) > self._max_observations:

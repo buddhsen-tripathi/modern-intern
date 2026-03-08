@@ -68,23 +68,28 @@ class MeetingAgent(BaseAgent):
         self._summaries.append(result)
         return result
 
-    def add_entry(self, text: str):
-        """Called by orchestrator to feed narration text during recording."""
+    def add_entry(self, text: str, speaker: str = "unknown"):
+        """Called by orchestrator to feed speech during recording."""
         if not self._recording:
             return
+        if not text.strip():
+            return
         self._transcript.append({
-            "text": text,
+            "text": text.strip(),
+            "speaker": speaker,
             "timestamp": time.time() - self._start_time,
         })
 
     async def _summarize(self) -> str:
         transcript_text = "\n".join(
-            f"[{e['timestamp']:.0f}s] {e['text']}" for e in self._transcript
+            f"[{e['timestamp']:.0f}s] {e['speaker'].upper()}: {e['text']}"
+            for e in self._transcript
         )
         prompt = (
             "Summarize the following meeting transcript into structured minutes.\n"
             "Include: key discussion points, decisions made, action items.\n"
-            "Format as clean bullet points.\n\n"
+            "Ignore any meta-comments about the recording process.\n"
+            "Format as clean bullet points. Be concise.\n\n"
             f"Transcript:\n{transcript_text}"
         )
         try:

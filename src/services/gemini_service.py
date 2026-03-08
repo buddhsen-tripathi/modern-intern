@@ -48,8 +48,11 @@ EMAIL (always include to/subject/body fields):
 If user says "draft email to Sarah about lunch" → "ACTION: draft email. to: Sarah, subject: lunch, body: let's grab lunch."
 If user gives incomplete info like "draft email about the meeting" (no recipient) → ask "Who should I send it to?" Do NOT fire ACTION without a recipient.
 
-CALENDAR:
-• "ACTION: calendar event. Standup tomorrow 10am."
+CALENDAR (always include title/date/time fields):
+• "ACTION: calendar event. title: standup, date: tomorrow, time: 10am, duration: 30 min, participants: team."
+If user says "schedule a meeting with John tomorrow at 3pm" → "ACTION: calendar event. title: meeting, date: tomorrow, time: 3pm, participants: John."
+If user gives incomplete info like "add event for lunch" (no date/time) → ask "When is the lunch event?"
+NEVER fire "ACTION: calendar event" without at least a title and date/time — ask the user first.
 
 MEETINGS:
 • "ACTION: meeting minutes start." / "ACTION: meeting minutes stop."
@@ -126,15 +129,17 @@ class GeminiService:
         self._on_narration = None
         self._on_action = None
         self._on_vad_state = None
+        self._on_user_speech = None
 
         self._receive_task = None
 
     def set_callbacks(self, on_audio=None, on_narration=None,
-                      on_action=None, on_vad_state=None):
+                      on_action=None, on_vad_state=None, on_user_speech=None):
         self._on_audio = on_audio
         self._on_narration = on_narration
         self._on_action = on_action
         self._on_vad_state = on_vad_state
+        self._on_user_speech = on_user_speech
 
     @property
     def connected(self) -> bool:
@@ -154,6 +159,7 @@ class GeminiService:
                 )
             ),
             output_audio_transcription=types.AudioTranscriptionConfig(),
+            input_audio_transcription=types.AudioTranscriptionConfig(),
             context_window_compression=types.ContextWindowCompressionConfig(
                 sliding_window=types.SlidingWindow(),
             ),
@@ -341,6 +347,12 @@ class GeminiService:
                                 if t:
                                     text_buf += t
 
+                            # Input transcription (text of what user said)
+                            if hasattr(sc, "input_transcription") and sc.input_transcription:
+                                t = getattr(sc.input_transcription, "text", "")
+                                if t and t.strip() and self._on_user_speech:
+                                    asyncio.create_task(self._on_user_speech(t.strip()))
+
                             if hasattr(sc, "turn_complete") and sc.turn_complete:
                                 self._gemini_speaking = False
                                 if text_buf.strip():
@@ -456,7 +468,7 @@ class GeminiService:
         elif action == "read_email":
             return {"count": 5}
         elif action == "calendar_event":
-            return {"title": spoken_content[:60]} if spoken_content else {}
+            return self._parse_calendar_fields(spoken_content)
         return {}
 
     def _parse_email_fields(self, text: str) -> dict:
@@ -480,5 +492,34 @@ class GeminiService:
         # Fallback: if no structured fields found, dump everything as body
         if not result["to"] and not result["subject"] and not result["body"]:
             result["body"] = text
+
+        return result
+
+    def _parse_calendar_fields(self, text: str) -> dict:
+        """Parse 'title: X, date: Y, time: Z, duration: W, participants: P' from spoken content."""
+        result = {"title": "", "date": "", "time": "", "duration": "", "participants": ""}
+        if not text:
+            return result
+
+        title_match = re.search(r"title:\s*([^,]+)", text, re.IGNORECASE)
+        date_match = re.search(r"date:\s*([^,]+)", text, re.IGNORECASE)
+        time_match = re.search(r"time:\s*([^,]+)", text, re.IGNORECASE)
+        dur_match = re.search(r"duration:\s*([^,]+)", text, re.IGNORECASE)
+        part_match = re.search(r"participants?:\s*(.+?)(?:,\s*(?:title|date|time|duration):|\.?$)", text, re.IGNORECASE)
+
+        if title_match:
+            result["title"] = title_match.group(1).strip().rstrip(".")
+        if date_match:
+            result["date"] = date_match.group(1).strip().rstrip(".")
+        if time_match:
+            result["time"] = time_match.group(1).strip().rstrip(".")
+        if dur_match:
+            result["duration"] = dur_match.group(1).strip().rstrip(".")
+        if part_match:
+            result["participants"] = part_match.group(1).strip().rstrip(".")
+
+        # Fallback: if no structured fields, use whole text as title
+        if not result["title"]:
+            result["title"] = text.strip().rstrip(".")[:60]
 
         return result

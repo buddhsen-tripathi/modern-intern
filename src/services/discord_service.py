@@ -79,15 +79,12 @@ def _format_note_start(action: str, result: dict) -> str:
 
 
 def _format_meeting(action: str, result: dict) -> str:
-    status = result.get("status", "")
-    msg = result.get("message", "")
-    summary = result.get("summary", "")
-    if status == "error":
+    if result.get("status") != "success":
         return ""
-    text = f"**Meeting Minutes**\n{msg}"
+    summary = result.get("summary", "")
     if summary:
-        text += f"\n\n**Summary:**\n{summary}"
-    return text
+        return summary
+    return result.get("message", "")
 
 
 def _format_email(action: str, result: dict) -> str:
@@ -109,11 +106,21 @@ def _format_email(action: str, result: dict) -> str:
 
 
 def _format_calendar(action: str, result: dict) -> str:
-    status = result.get("status", "")
-    msg = result.get("message", "")
-    if status == "error":
+    if result.get("status") != "success":
         return ""
-    return f"**Calendar Event**\n{msg}"
+    event = result.get("event", {})
+    if not event:
+        return ""
+    lines = [f"**{event.get('title', 'Event')}**"]
+    if event.get("date") and event["date"] != "TBD":
+        lines.append(f"Date: {event['date']}")
+    if event.get("time") and event["time"] != "TBD":
+        lines.append(f"Time: {event['time']}")
+    if event.get("duration"):
+        lines.append(f"Duration: {event['duration']}")
+    if event.get("participants"):
+        lines.append(f"With: {event['participants']}")
+    return "\n".join(lines)
 
 
 def _format_generic(action: str, result: dict) -> str:

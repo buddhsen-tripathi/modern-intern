@@ -1,11 +1,11 @@
-"""Calendar agent — create events.
+"""Calendar agent — create events stored locally, confirmed via Discord.
 
-Currently a stub that stores events locally.
-TODO: Integrate with Google Calendar API via OAuth2.
+Parses event details from voice commands. No external API needed.
 """
 
 import logging
 import time
+from datetime import datetime, timedelta
 
 from src.agents.base import BaseAgent
 
@@ -21,25 +21,54 @@ class CalendarAgent(BaseAgent):
         return "Calendar"
 
     async def execute(self, params: dict, context: dict) -> dict:
-        title = params.get("title", "Untitled Event")
-        start = params.get("start", "")
-        duration = params.get("duration_minutes", 30)
-        description = params.get("description", "")
+        title = params.get("title", "").strip()
+        date = params.get("date", "").strip()
+        time_str = params.get("time", "").strip()
+        duration = params.get("duration", "").strip()
+        participants = params.get("participants", "").strip()
+
+        if not title:
+            return {
+                "status": "error",
+                "error_type": "missing_title",
+                "message": "What's the event about?",
+            }
+
+        if not date and not time_str:
+            return {
+                "status": "error",
+                "error_type": "missing_datetime",
+                "message": f"When is \"{title}\"? I need a date and time.",
+            }
 
         event = {
             "title": title,
-            "start": start,
-            "duration_minutes": duration,
-            "description": description,
+            "date": date or "TBD",
+            "time": time_str or "TBD",
+            "duration": duration or "30 min",
+            "participants": participants,
             "created_at": time.time(),
         }
         self._events.append(event)
 
-        # TODO: actual Google Calendar API create
-        log.info("Calendar event created (stub): %s at %s", title, start or "TBD")
+        log.info("Calendar event created: %s on %s at %s", title, date, time_str)
+
+        # Build confirmation message
+        details = [f"Event: {title}"]
+        if date:
+            details.append(f"Date: {date}")
+        if time_str:
+            details.append(f"Time: {time_str}")
+        if duration:
+            details.append(f"Duration: {duration}")
+        if participants:
+            details.append(f"With: {participants}")
+
+        confirmation = " | ".join(details)
+
         return {
             "status": "success",
-            "message": f"Event created: \"{title}\" {f'at {start}' if start else '(time TBD)'}",
+            "message": confirmation,
             "event": event,
         }
 
