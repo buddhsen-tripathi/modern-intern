@@ -6,7 +6,6 @@ does not output text tags).
 """
 
 import asyncio
-import json
 import logging
 import re
 import time
@@ -30,75 +29,38 @@ from src.config import (
 log = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """\
-You are SILAS — a smart personal assistant that sees and hears through the user's phone.
+You are SILAS — a concise personal assistant. You see via phone camera and hear via mic.
 
-PERSONALITY: Calm, efficient, helpful. Concise and clear.
-ONE sentence replies, two max. No fluff.
+CRITICAL RULES:
+1. NEVER think out loud. No "analyzing", "scanning", "I see", "let me check".
+2. When you see a gesture, say ONLY "GESTURE: <name>" — nothing else.
+3. When no gesture is visible and you get a GESTURE CHECK, produce NO output. Stay completely silent. Do NOT say anything.
+4. Keep ALL replies to ONE short sentence. No explanations.
 
-─── WHAT YOU SEE AND HEAR ─────────────────────────────────
-The user holds their phone with the REAR camera facing outward.
-You see what's IN FRONT of the user. You CANNOT see the user themselves.
-You hear the user's microphone — their voice and ambient audio.
+─── CAMERA ────────────────────────────────────────────────
+Rear camera faces outward — you see what's in front of the user.
 
-─── HOW IT WORKS ──────────────────────────────────────────
-GESTURES trigger actions. VOICE provides content.
+─── GESTURES ──────────────────────────────────────────────
+Watch for hand gestures in every frame:
+• THUMBS UP — fist with thumb up
+• OPEN PALM — five fingers spread, palm facing camera
+• PEACE SIGN — index + middle fingers in V
+• POINTING UP — only index finger extended up
+• WAVE — open hand moving side to side
+• OK SIGN — thumb + index forming a circle
 
-You watch the camera for hand gestures. When you see one, you MUST say
-the exact phrase "GESTURE: <name>" aloud. Examples:
-- "GESTURE: open palm"
-- "GESTURE: thumbs up"
-- "GESTURE: peace sign"
-
-After announcing a gesture, the system will handle the rest.
-
-When the user gives a voice command (with or without a gesture), say
-"ACTION: <type>" followed by the details. Examples:
-- "ACTION: note. Buy groceries tomorrow."
-- "ACTION: draft email. To John, subject meeting update, body let's reschedule to Friday."
-- "ACTION: calendar event. Team standup tomorrow at 10am for 30 minutes."
-- "ACTION: meeting minutes start."
-- "ACTION: meeting minutes stop."
-- "ACTION: send email."
-- "ACTION: read email."
-
-─── GESTURE RECOGNITION (CRITICAL) ────────────────────────
-You MUST actively watch every video frame for hand gestures.
-The user will hold up their hand in front of the camera.
-
-WHAT GESTURES LOOK LIKE IN THE CAMERA:
-• THUMBS UP — a fist with thumb extended upward.
-• OPEN PALM — all five fingers spread wide, palm facing camera.
-• PEACE SIGN — a fist with index and middle fingers extended in a V shape.
-• POINTING UP — a fist with only the index finger extended straight up.
-• WAVE — an open hand moving side to side.
-• OK SIGN — thumb and index finger forming a circle, other fingers extended.
-
-When you see a hand gesture, say "GESTURE: <name>" immediately.
-Do NOT hesitate. If you see a hand shape, call it out.
-
-─── RESPONDING TO GESTURE CHECKS ──────────────────────────
-You will receive periodic "GESTURE CHECK" prompts.
-- If you see a hand/fingers in the current frame, say "GESTURE: <name>"
-- If no hand is visible, stay silent. Do not say "clear" or anything.
+When you see one → say "GESTURE: <name>" (e.g. "GESTURE: thumbs up")
+When you DON'T see one → say absolutely nothing.
 
 ─── VOICE COMMANDS ────────────────────────────────────────
-When the user speaks a command, respond with "ACTION: <type>" and include
-all relevant details in your spoken response.
+When user speaks a command, say "ACTION: <type>" with details:
+• "ACTION: note. Buy groceries."
+• "ACTION: draft email. To John, subject update, body let's meet Friday."
+• "ACTION: calendar event. Standup tomorrow 10am."
+• "ACTION: meeting minutes start." / "ACTION: meeting minutes stop."
+• "ACTION: send email." / "ACTION: read email."
 
-For notes: "ACTION: note." then speak the note content.
-For email: "ACTION: draft email." then speak to, subject, body.
-For calendar: "ACTION: calendar event." then speak title, time, duration.
-For meeting: "ACTION: meeting minutes start." or "ACTION: meeting minutes stop."
-For send: "ACTION: send email."
-For read: "ACTION: read email."
-
-After announcing an action, you can add a brief natural confirmation like
-"Got it" or "Done".
-
-RULES:
-- Always say "GESTURE:" or "ACTION:" with the exact format above.
-- Keep responses brief — one or two sentences max.
-- Be conversational and natural, but always include the trigger phrase."""
+Then a brief confirmation like "Got it" or "Done". Nothing more."""
 
 # Parse spoken gesture announcements from narration text
 # Matches: "gesture: open palm", "Gesture: thumbs up", etc.
@@ -138,13 +100,30 @@ ACTION_NORMALIZE = {
 }
 
 WATCHER_PROMPTS = [
-    "GESTURE CHECK. Look at the video frame right now. Do you see a hand or fingers? If yes, say GESTURE followed by the name. If not, stay silent.",
-    "GESTURE CHECK. Any hand gestures visible? Thumbs up, open palm, peace sign, pointing? If you see one, announce it. Otherwise silence.",
-    "GESTURE CHECK. Scan the frame for hands. If you see a gesture, call it out. If not, say nothing.",
+    "GESTURE CHECK. Hand visible? → say GESTURE: <name>. No hand? → say nothing.",
+    "GESTURE CHECK. Any hand gesture in frame? If yes: GESTURE: <name>. If no: silence.",
+    "GESTURE CHECK. Look for hands. Gesture → announce. No gesture → no output.",
 ]
 
 MAX_RECONNECT_ATTEMPTS = 5
 MAX_OBSERVATION_BUFFER = 10
+
+# Patterns that indicate Gemini's internal reasoning (not user-facing speech)
+THINKING_PATTERNS = re.compile(
+    r"(?i)"
+    r"(?:^|\n)\s*\*\*.*?\*\*"            # Markdown bold headers like **Analyzing...**
+    r"|(?:^|\n)\s*#+\s+"                  # Markdown # headers
+    r"|(?:analyzing|initiating|processing|examining|scanning|observing|checking)"
+    r"\s+(?:gesture|frame|video|image|request|observation|protocol|the current)"
+    r"|I(?:'ve| have)\s+(?:examined|analyzed|scanned|processed|checked|looked at)\s+(?:the|this)"
+    r"|no\s+(?:hand|gesture|fingers?)(?:\s+(?:gesture|visible|detected|present|seen))"
+    r"|I\s+(?:don't|do not)\s+see\s+(?:any\s+)?(?:hand|gesture|fingers?)"
+    r"|nothing\s+(?:detected|visible|to report)"
+    r"|the\s+frame\s+(?:shows?|contains?|appears?)"
+    r"|current(?:ly)?\s+(?:frame|video|image)\s+(?:shows?|contains?)"
+    r"|let me (?:check|scan|look|examine|analyze)"
+    r"|gesture check(?:ing)?\s*(?:complete|done|finished)?"
+)
 
 
 class GeminiService:
@@ -229,10 +208,8 @@ class GeminiService:
             turns=types.Content(
                 role="user",
                 parts=[types.Part(text=(
-                    "Session active. You are Silas. Watch the video for hand gestures "
-                    "and listen for voice commands. Say a brief one-sentence greeting "
-                    "and start watching. Remember: say 'GESTURE: <name>' when you see "
-                    "a hand gesture, and 'ACTION: <type>' for voice commands."
+                    "Session started. Say a 3-4 word greeting like 'Hey, Silas here.' "
+                    "then start watching silently. Do NOT describe what you see."
                 ))],
             ),
             turn_complete=True,
@@ -481,15 +458,47 @@ class GeminiService:
                 if self._on_action:
                     asyncio.create_task(self._on_action(action, params))
 
-        # Always forward narration text (strip gesture/action prefixes for display)
+        # Strip gesture/action prefixes from display text
         display = SPOKEN_GESTURE_RE.sub("", text)
         display = SPOKEN_ACTION_RE.sub("", display).strip()
+
+        # Filter out Gemini's internal thinking/reasoning — only show user-facing speech
+        display = self._filter_narration(display)
+
         if display:
             self._observation_buffer.append(display)
             if len(self._observation_buffer) > MAX_OBSERVATION_BUFFER:
                 self._observation_buffer.pop(0)
             if self._on_narration:
                 asyncio.create_task(self._on_narration(display))
+
+    def _filter_narration(self, text: str) -> str:
+        """Filter out Gemini's internal reasoning, keeping only user-facing speech."""
+        if not text:
+            return ""
+
+        # Strip markdown formatting
+        clean = re.sub(r"\*\*([^*]*)\*\*", r"\1", text)  # **bold** → bold
+        clean = re.sub(r"^\s*#+\s+", "", clean, flags=re.MULTILINE)  # # headers
+
+        # If the whole text matches thinking patterns, suppress it entirely
+        if THINKING_PATTERNS.search(clean):
+            # Extract any remaining user-facing content after removing thinking parts
+            lines = clean.split("\n")
+            kept = []
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    continue
+                if THINKING_PATTERNS.search(line):
+                    continue
+                kept.append(line)
+            clean = " ".join(kept).strip()
+
+        # Strip trailing/leading whitespace and orphan punctuation
+        clean = clean.strip().strip(".-—").strip()
+
+        return clean
 
     def _build_params_from_speech(self, action: str, spoken_content: str) -> dict:
         """Build action params from the spoken content after an ACTION announcement."""

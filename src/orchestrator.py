@@ -71,7 +71,7 @@ class Orchestrator:
         # Pending action: gesture arms it, voice completes it
         self._pending_action: str | None = None
         self._pending_since: float = 0.0
-        self._pending_timeout = 5.0  # seconds to wait for voice input
+        self._pending_timeout = 15.0  # seconds to wait for voice input
 
         # Gesture cooldown tracking
         self._last_gesture_time: float = 0.0
