@@ -9,6 +9,7 @@ const ACTION_LABELS = {
   send_email: 'EMAIL SENT',
   read_email: 'EMAIL READ',
   calendar_event: 'EVENT CREATED',
+  search: 'SEARCH RESULT',
 }
 
 const LOG_PREFIXES = {
@@ -20,6 +21,7 @@ const LOG_PREFIXES = {
   send_email: 'MAIL',
   read_email: 'MAIL',
   calendar_event: 'CAL',
+  search: 'SRCH',
 }
 
 function formatTimestamp(date) {

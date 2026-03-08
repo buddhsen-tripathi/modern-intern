@@ -57,6 +57,11 @@ NEVER fire "ACTION: calendar event" without at least a title and date/time — a
 MEETINGS:
 • "ACTION: meeting minutes start." / "ACTION: meeting minutes stop."
 
+SEARCH:
+• "ACTION: search. query: what is quantum computing."
+If user says "search for latest news on AI" → "ACTION: search. query: latest news on AI."
+If user says "look up the capital of France" → "ACTION: search. query: capital of France."
+
 RULES:
 - For draft email: ALWAYS include "to:", "subject:", and "body:" fields.
 - NEVER fire "ACTION: draft email" without a recipient — ask the user first.
@@ -70,7 +75,7 @@ Only use ACTION: when the user gives an actual command."""
 
 # Parse spoken action announcements from narration text
 SPOKEN_ACTION_RE = re.compile(
-    r"action:\s*(note\s*(?:start|stop)|note|draft\s*email|send\s*email|read\s*email|calendar\s*event|meeting\s*minutes\s*(?:start|stop))",
+    r"action:\s*(note\s*(?:start|stop)|note|draft\s*email|send\s*email|read\s*email|calendar\s*event|meeting\s*minutes\s*(?:start|stop)|search)",
     re.IGNORECASE,
 )
 
@@ -87,6 +92,7 @@ ACTION_NORMALIZE = {
     "calendar event": "calendar_event",
     "meeting minutes start": "meeting_minutes_start",
     "meeting minutes stop": "meeting_minutes_stop",
+    "search": "search",
 }
 
 MAX_RECONNECT_ATTEMPTS = 5
@@ -469,6 +475,8 @@ class GeminiService:
             return {"count": 5}
         elif action == "calendar_event":
             return self._parse_calendar_fields(spoken_content)
+        elif action == "search":
+            return self._parse_search_fields(spoken_content)
         return {}
 
     def _parse_email_fields(self, text: str) -> dict:
@@ -523,3 +531,12 @@ class GeminiService:
             result["title"] = text.strip().rstrip(".")[:60]
 
         return result
+
+    def _parse_search_fields(self, text: str) -> dict:
+        """Parse 'query: X' from spoken content."""
+        if not text:
+            return {"query": ""}
+        query_match = re.search(r"query:\s*(.+)", text, re.IGNORECASE)
+        if query_match:
+            return {"query": query_match.group(1).strip().rstrip(".")}
+        return {"query": text.strip().rstrip(".")}

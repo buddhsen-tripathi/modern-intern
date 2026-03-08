@@ -6,6 +6,7 @@ const VOICE_COMMANDS = [
   { cmd: '"calendar event"', desc: 'Create a calendar event' },
   { cmd: '"start meeting"', desc: 'Begin recording meeting' },
   { cmd: '"stop meeting"', desc: 'End and save meeting notes' },
+  { cmd: '"search <term>"', desc: 'Search and get a summary' },
 ]
 
 export default function StartScreen({ phase, onStart }) {

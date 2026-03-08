@@ -131,6 +131,18 @@ def _format_generic(action: str, result: dict) -> str:
     return f"**{action}**\n{msg}"
 
 
+def _format_search(action: str, result: dict) -> str:
+    if result.get("status") != "success":
+        return ""
+    query = result.get("query", "")
+    msg = result.get("message", "")
+    if not msg:
+        return ""
+    if query:
+        return f"**{query}**\n{msg}"
+    return msg
+
+
 ACTION_FORMATTERS = {
     "note": _format_note,
     "note_start": _format_note_start,
@@ -139,4 +151,5 @@ ACTION_FORMATTERS = {
     "send_email": _format_email,
     "read_email": _format_email,
     "calendar_event": _format_calendar,
+    "search": _format_search,
 }

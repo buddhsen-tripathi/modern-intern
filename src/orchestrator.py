@@ -10,6 +10,7 @@ from src.agents.calendar_agent import CalendarAgent
 from src.agents.email_agent import EmailAgent
 from src.agents.meeting_agent import MeetingAgent
 from src.agents.note_agent import NoteAgent
+from src.agents.search_agent import SearchAgent
 from src.display.web_display import WebDisplayService
 from src.services.gemini_service import GeminiService
 from src.services.discord_service import DiscordService
@@ -33,6 +34,7 @@ class Orchestrator:
         self._meeting_agent = MeetingAgent(api_key)
         self._email_agent = EmailAgent()
         self._calendar_agent = CalendarAgent()
+        self._search_agent = SearchAgent(api_key)
 
         # Agent routing table
         self._agents = {
@@ -46,6 +48,7 @@ class Orchestrator:
             "send_email": self._email_agent,
             "read_email": self._email_agent,
             "calendar_event": self._calendar_agent,
+            "search": self._search_agent,
         }
 
         # Note recording state
