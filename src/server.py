@@ -12,6 +12,7 @@ from src.orchestrator import Orchestrator
 log = logging.getLogger(__name__)
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
+FRONTEND_DIST = ROOT / "frontend" / "dist"
 
 
 async def ws_handler(request: web.Request):
@@ -61,15 +62,40 @@ async def ws_handler(request: web.Request):
 
 
 async def index_handler(request: web.Request):
+    """Serve React build if available, fall back to legacy template."""
+    if FRONTEND_DIST.exists() and (FRONTEND_DIST / "index.html").exists():
+        return web.FileResponse(FRONTEND_DIST / "index.html")
     return web.FileResponse(ROOT / "templates" / "index.html")
+
+
+async def dist_file_handler(request: web.Request):
+    """Serve individual files from frontend/dist (mic-processor.js, etc.)."""
+    filename = request.match_info["filename"]
+    filepath = FRONTEND_DIST / filename
+    if filepath.exists() and filepath.is_file():
+        return web.FileResponse(filepath)
+    # SPA fallback: serve index.html for unknown routes
+    return await index_handler(request)
 
 
 def create_app() -> web.Application:
     app = web.Application()
     app["orchestrator"] = Orchestrator()
 
-    app.router.add_get("/", index_handler)
+    # WebSocket must be first
     app.router.add_get("/ws", ws_handler)
-    app.router.add_static("/static/", ROOT / "static")
+
+    # Index
+    app.router.add_get("/", index_handler)
+
+    if FRONTEND_DIST.exists():
+        # Serve Vite build assets (hashed JS/CSS bundles)
+        if (FRONTEND_DIST / "assets").exists():
+            app.router.add_static("/assets/", FRONTEND_DIST / "assets")
+        # Serve top-level dist files (mic-processor.js, etc.)
+        app.router.add_get("/{filename}", dist_file_handler)
+    else:
+        # Fallback to legacy static files
+        app.router.add_static("/static/", ROOT / "static")
 
     return app

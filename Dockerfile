@@ -15,14 +15,28 @@ COPY pyproject.toml uv.lock ./
 # Install deps (frozen lockfile, no dev)
 RUN uv sync --frozen --no-dev
 
+# ---------- frontend build ----------
+FROM node:20-slim AS frontend
+
+WORKDIR /app/frontend
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+COPY frontend/ .
+RUN npm run build
+
 # ---------- runtime ----------
 FROM python:3.11-slim
 
 WORKDIR /app
 
-# Copy virtualenv + app from builder
+# Copy virtualenv from builder
 COPY --from=builder /app/.venv /app/.venv
+
+# Copy app source
 COPY . .
+
+# Copy built frontend (overwrite source frontend dir with dist)
+COPY --from=frontend /app/frontend/dist /app/frontend/dist
 
 ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONUNBUFFERED=1
