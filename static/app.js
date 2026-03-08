@@ -1,34 +1,36 @@
 /**
- * JOYBAIT — spread the love — Game Client
+ * Silas — Gesture-Based Personal Assistant Client
  *
- * Two-phase start:
- *   1. LET'S GO → init camera/audio/WS, request intro narration
- *   2. START VIBING → start game timer + scoring (enabled after intro finishes)
- *
- * Camera → JPEG 1FPS → WS
- * Mic → 16kHz PCM → WS (via AudioWorklet)
- * WS → narration audio (24kHz mono) + music audio (48kHz stereo) + JSON state
- * Web Audio API mixes narration (gain=1.0) + music (gain=0.25)
+ * Camera -> JPEG 1FPS -> WS
+ * Mic -> 16kHz PCM -> WS (via AudioWorklet)
+ * WS -> narration audio (24kHz mono) + JSON events
  */
 
-// ── Constants ───────────────────────────────────────────
+// -- Constants --
 const TAG_CAMERA = 0x01;
 const TAG_MIC = 0x02;
 const TAG_NARRATION = 0x01;
-const TAG_MUSIC = 0x02;
-
 const NARRATION_RATE = 24000;
-const MUSIC_RATE = 48000;
 
-const PENALTY_LABELS = {
-  idle: "just standing there fr",
-  phone_staring: "get off your phone bruh",
-  walking_away: "ghosting the vibes",
-  ignoring: "npc behavior",
-  prolonged_silence: "quiet quitting irl",
+const GESTURE_LABELS = {
+  thumbs_up: { icon: "\u{1F44D}", label: "Confirmed" },
+  open_palm: { icon: "\u{270B}", label: "Taking note" },
+  peace_sign: { icon: "\u{270C}", label: "Email" },
+  point_up: { icon: "\u{261D}", label: "Calendar" },
+  wave: { icon: "\u{1F44B}", label: "Meeting" },
+  ok_sign: { icon: "\u{1F44C}", label: "Send" },
 };
 
-// ── DOM refs ────────────────────────────────────────────
+const ACTION_LABELS = {
+  note: "Note saved",
+  meeting_minutes: "Meeting minutes",
+  draft_email: "Email drafted",
+  send_email: "Email sent",
+  read_email: "Reading email",
+  calendar_event: "Event created",
+};
+
+// -- DOM refs --
 const video = document.getElementById("camera-video");
 const canvas = document.getElementById("capture-canvas");
 const ctx = canvas.getContext("2d");
@@ -38,63 +40,31 @@ const startHint = document.getElementById("start-hint");
 const introArea = document.getElementById("intro-area");
 const introText = document.getElementById("intro-text");
 const hud = document.getElementById("hud");
-const gameoverScreen = document.getElementById("gameover-screen");
 
-const timerEl = document.getElementById("timer");
-const streakEl = document.getElementById("streak-count");
-const streakContainer = document.getElementById("streak-container");
-const multEl = document.getElementById("multiplier");
-const rankEl = document.getElementById("rank-badge");
-const vibesBar = document.getElementById("vibes-fill");
-const vibesGlow = document.getElementById("vibes-glow");
-const vibesVal = document.getElementById("vibes-value");
+const statusPill = document.getElementById("status-pill");
+const gestureBadge = document.getElementById("gesture-badge");
+const gestureBadgeIcon = document.getElementById("gesture-badge-icon");
+const gestureBadgeText = document.getElementById("gesture-badge-text");
 const narrationText = document.getElementById("narration-text");
 const micDot = document.getElementById("mic-dot");
 const voiceStatus = document.getElementById("voice-status");
 const toastContainer = document.getElementById("toast-container");
-const taskBar = document.getElementById("task-bar");
-const taskText = document.getElementById("task-text");
-const taskBonus = document.getElementById("task-bonus");
-const taskSkip = document.getElementById("task-skip");
-const scoreFeed = document.getElementById("score-feed");
+const activityFeed = document.getElementById("activity-feed");
 
-const goTitle = document.getElementById("go-title");
-const goRank = document.getElementById("go-rank");
-const goScore = document.getElementById("go-score");
-const goStreak = document.getElementById("go-best-streak");
-const goMultiplier = document.getElementById("go-multiplier");
-const goTasks = document.getElementById("go-tasks");
-const replayBtn = document.getElementById("replay-btn");
-
-// ── State ───────────────────────────────────────────────
+// -- State --
 let ws = null;
 let audioCtx = null;
 let narrationGain = null;
-let musicGain = null;
 let narrationNextTime = 0;
-let musicNextTime = 0;
 let micStream = null;
 let micWorklet = null;
 let capturing = false;
-let bestStreak = 0;
-let bestMultiplier = 1;
-let lastState = null;
-
-// Intro tracking
-let phase = "idle"; // idle → intro → playing
+let phase = "idle"; // idle -> intro -> active
 let introAudioReceived = false;
 let introEndTimer = null;
+let gestureBadgeTimer = null;
 
-// ── Helpers ─────────────────────────────────────────────
-
-function formatTime(seconds) {
-  const m = Math.floor(seconds / 60);
-  const s = Math.floor(seconds % 60);
-  return `${m}:${s.toString().padStart(2, "0")}`;
-}
-
-// ── Camera ──────────────────────────────────────────────
-
+// -- Camera --
 async function startCamera() {
   const stream = await navigator.mediaDevices.getUserMedia({
     video: { facingMode: "environment", width: { ideal: 768 }, height: { ideal: 768 } },
@@ -131,14 +101,11 @@ function captureLoop() {
   );
 }
 
-// ── Mic ─────────────────────────────────────────────────
-
+// -- Mic --
 async function startMic() {
   const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
   micStream = stream;
-
   await audioCtx.audioWorklet.addModule("/static/mic-processor.js");
-
   const source = audioCtx.createMediaStreamSource(stream);
   micWorklet = new AudioWorkletNode(audioCtx, "mic-processor");
 
@@ -154,32 +121,13 @@ async function startMic() {
   source.connect(micWorklet);
 }
 
-function stopMic() {
-  if (micWorklet) {
-    micWorklet.disconnect();
-    micWorklet = null;
-  }
-  if (micStream) {
-    micStream.getTracks().forEach((t) => t.stop());
-    micStream = null;
-  }
-}
-
-// ── Audio Playback ──────────────────────────────────────
-
+// -- Audio Playback --
 function initAudio() {
   audioCtx = new AudioContext();
-
   narrationGain = audioCtx.createGain();
   narrationGain.gain.value = 1.0;
   narrationGain.connect(audioCtx.destination);
-
-  musicGain = audioCtx.createGain();
-  musicGain.gain.value = 0.25;
-  musicGain.connect(audioCtx.destination);
-
   narrationNextTime = 0;
-  musicNextTime = 0;
 }
 
 function playNarrationChunk(int16Array) {
@@ -203,43 +151,17 @@ function playNarrationChunk(int16Array) {
   narrationNextTime = start + buffer.duration;
 }
 
-function playMusicChunk(int16Array) {
-  if (!audioCtx || audioCtx.state === "closed") return;
-  const samples = int16Array.length / 2;
-  if (samples <= 0) return;
-
-  const buffer = audioCtx.createBuffer(2, samples, MUSIC_RATE);
-  const left = buffer.getChannelData(0);
-  const right = buffer.getChannelData(1);
-  for (let i = 0; i < samples; i++) {
-    left[i] = int16Array[i * 2] / 32768;
-    right[i] = int16Array[i * 2 + 1] / 32768;
-  }
-
-  const source = audioCtx.createBufferSource();
-  source.buffer = buffer;
-  source.connect(musicGain);
-
-  const now = audioCtx.currentTime;
-  const start = Math.max(now, musicNextTime);
-  source.start(start);
-  musicNextTime = start + buffer.duration;
-}
-
-// ── WebSocket ───────────────────────────────────────────
-
+// -- WebSocket --
 function connectWS() {
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
-  ws = new WebSocket(`${proto}//${location.host}/ws/game`);
+  ws = new WebSocket(`${proto}//${location.host}/ws`);
   ws.binaryType = "arraybuffer";
 
   ws.onopen = () => {
     console.log("[WS] Connected");
     if (phase === "intro") {
-      // Send intro request once connected
-      ws.send(JSON.stringify({ type: "intro" }));
-      startHint.textContent = "SILAS IS LOADING...";
-      // Start streaming camera now that WS is open
+      ws.send(JSON.stringify({ type: "connect" }));
+      startHint.textContent = "SILAS IS CONNECTING...";
       captureLoop();
     }
   };
@@ -259,18 +181,13 @@ function connectWS() {
     }, 2000);
   };
 
-  ws.onerror = (err) => {
-    console.error("[WS] Error", err);
-  };
+  ws.onerror = (err) => console.error("[WS] Error", err);
 }
 
 function handleJSON(msg) {
   switch (msg.type) {
-    case "state":
-      updateHUD(msg.data);
-      break;
     case "event":
-      showToast(msg.data);
+      handleEvent(msg.data);
       break;
     case "narration":
       if (phase === "intro") {
@@ -280,17 +197,7 @@ function handleJSON(msg) {
       }
       break;
     case "vad_state":
-      if (msg.state === "LISTENING") {
-        micDot.classList.add("listening");
-        voiceStatus.textContent = "LISTENING";
-        voiceStatus.className = "voice-status listening";
-      } else {
-        micDot.classList.remove("listening");
-        if (micStream) {
-          voiceStatus.textContent = "VOICE";
-          voiceStatus.className = "voice-status active";
-        }
-      }
+      updateVAD(msg.state);
       break;
   }
 }
@@ -303,25 +210,130 @@ function handleBinary(data) {
 
   if (tag === TAG_NARRATION) {
     playNarrationChunk(int16);
-
     if (phase === "intro") {
       introAudioReceived = true;
-      // Reset the "intro done" timer every time we get audio
       clearTimeout(introEndTimer);
       introEndTimer = setTimeout(onIntroDone, 2000);
     }
-  } else if (tag === TAG_MUSIC) {
-    playMusicChunk(int16);
   }
 }
 
-// ── Intro Flow ──────────────────────────────────────────
+// -- Event Handling --
+function handleEvent(event) {
+  if (event.type === "gesture") {
+    showGesture(event.gesture);
+  } else if (event.type === "action_result") {
+    showActionResult(event);
+  }
+}
 
+function showGesture(gesture) {
+  const info = GESTURE_LABELS[gesture] || { icon: "?", label: gesture };
+
+  // Show gesture badge
+  gestureBadge.classList.add("visible");
+  gestureBadgeIcon.textContent = info.icon;
+  gestureBadgeText.textContent = info.label;
+
+  clearTimeout(gestureBadgeTimer);
+  gestureBadgeTimer = setTimeout(() => {
+    gestureBadge.classList.remove("visible");
+  }, 3000);
+
+  // Toast
+  showToast(info.icon + " " + info.label, "gesture");
+}
+
+function showActionResult(event) {
+  const label = ACTION_LABELS[event.action] || event.action;
+  const isError = event.status === "error";
+  const toastType = isError ? "error" : "success";
+
+  showToast(event.message || label, toastType);
+
+  if (!isError) {
+    addToFeed(event.action, event.message || label);
+  }
+}
+
+function showToast(text, type) {
+  const el = document.createElement("div");
+  el.className = `toast toast-${type}`;
+  el.textContent = text;
+  toastContainer.appendChild(el);
+  el.addEventListener("animationend", () => el.remove());
+}
+
+function addToFeed(action, message) {
+  const entry = document.createElement("div");
+  entry.className = "feed-entry";
+
+  const icon = document.createElement("span");
+  icon.className = "feed-icon";
+  const icons = {
+    note: "\u{1F4DD}",
+    meeting_minutes: "\u{1F4CB}",
+    draft_email: "\u{2709}",
+    send_email: "\u{1F4E8}",
+    read_email: "\u{1F4E9}",
+    calendar_event: "\u{1F4C5}",
+  };
+  icon.textContent = icons[action] || "\u{2022}";
+
+  const text = document.createElement("span");
+  text.className = "feed-text";
+  text.textContent = message;
+
+  const time = document.createElement("span");
+  time.className = "feed-time";
+  const now = new Date();
+  time.textContent = now.getHours().toString().padStart(2, "0") + ":" +
+                     now.getMinutes().toString().padStart(2, "0");
+
+  entry.appendChild(icon);
+  entry.appendChild(text);
+  entry.appendChild(time);
+  activityFeed.appendChild(entry);
+
+  // Keep max 6 entries
+  while (activityFeed.children.length > 6) {
+    activityFeed.removeChild(activityFeed.firstChild);
+  }
+
+  // Auto-fade after 30s
+  setTimeout(() => {
+    entry.classList.add("feed-fade");
+    entry.addEventListener("animationend", () => entry.remove());
+  }, 30000);
+}
+
+// -- Narration --
+function showNarration(text) {
+  narrationText.textContent = text;
+  clearTimeout(showNarration._timer);
+  showNarration._timer = setTimeout(() => {
+    narrationText.textContent = "Listening...";
+  }, 10000);
+}
+
+function updateVAD(state) {
+  if (state === "LISTENING") {
+    micDot.classList.add("listening");
+    voiceStatus.textContent = "LISTENING";
+    voiceStatus.className = "voice-status listening";
+  } else {
+    micDot.classList.remove("listening");
+    if (micStream) {
+      voiceStatus.textContent = "VOICE";
+      voiceStatus.className = "voice-status active";
+    }
+  }
+}
+
+// -- Intro Flow --
 function showIntroNarration(text) {
   introArea.classList.add("visible");
-  introText.textContent = `"${text}"`;
-
-  // If no audio comes (e.g. text-only), enable button after delay
+  introText.textContent = text;
   if (!introAudioReceived) {
     clearTimeout(introEndTimer);
     introEndTimer = setTimeout(onIntroDone, 5000);
@@ -329,196 +341,29 @@ function showIntroNarration(text) {
 }
 
 function onIntroDone() {
-  console.log("[Intro] Complete — enabling START VIBING");
-  startBtn.textContent = "START VIBING";
+  startBtn.textContent = "START SESSION";
   startBtn.disabled = false;
-  startHint.textContent = "TAP TO START THE GAME";
+  startHint.textContent = "tap to begin";
 
-  // Switch handler to start vibing
-  startBtn.removeEventListener("click", letsGo);
-  startBtn.addEventListener("click", startVibing);
+  startBtn.removeEventListener("click", connectSilas);
+  startBtn.addEventListener("click", startSession);
 }
 
-// ── HUD Updates ─────────────────────────────────────────
-
-function updateHUD(state) {
-  lastState = state;
-
-  timerEl.textContent = formatTime(state.timer);
-
-  // Timer warning colors
-  if (state.timer <= 30) {
-    timerEl.classList.add("critical");
-    timerEl.classList.remove("warning");
-  } else if (state.timer <= 60) {
-    timerEl.classList.add("warning");
-    timerEl.classList.remove("critical");
-  } else {
-    timerEl.classList.remove("warning", "critical");
-  }
-
-  streakEl.textContent = state.streak;
-  multEl.textContent = `${state.multiplier}x`;
-
-  // Streak glow effects
-  if (state.streak >= 5) {
-    streakContainer.classList.add("fire");
-    streakContainer.classList.remove("hot");
-  } else if (state.streak >= 3) {
-    streakContainer.classList.add("hot");
-    streakContainer.classList.remove("fire");
-  } else {
-    streakContainer.classList.remove("hot", "fire");
-  }
-
-  vibesVal.textContent = state.vibes;
-
-  // Vibes bar
-  const pct = Math.min(100, (state.vibes / 1000) * 100);
-  vibesBar.style.width = `${pct}%`;
-
-  // Position glow at end of fill
-  if (pct > 0) {
-    vibesGlow.style.left = `calc(${pct}% - 10px)`;
-    vibesGlow.style.opacity = "1";
-  } else {
-    vibesGlow.style.opacity = "0";
-  }
-
-  // Rank badge
-  const rankTextEl = rankEl.querySelector(".rank-text");
-  if (rankTextEl) rankTextEl.textContent = state.rank;
-  rankEl.className = `rank-badge rank-${state.rank}`;
-
-  // Track bests
-  if (state.streak > bestStreak) bestStreak = state.streak;
-  if (state.multiplier > bestMultiplier) bestMultiplier = state.multiplier;
-
-  // Task bar
-  if (state.activeTask) {
-    taskBar.style.display = "flex";
-    taskText.textContent = state.activeTask.text;
-    taskBonus.textContent = `+${state.activeTask.bonus}`;
-  } else {
-    taskBar.style.display = "none";
-  }
-
-  // Game over
-  if (state.gameOver) {
-    showGameOver(state);
-  }
-}
-
-function showToast(event) {
-  const el = document.createElement("div");
-
-  if (event.type === "score") {
-    el.className = "toast score";
-    const pts = document.createElement("div");
-    pts.className = "toast-points";
-    pts.textContent = `+${event.points} VIBES` + (event.multiplier > 1 ? ` (${event.multiplier}x)` : "");
-    el.appendChild(pts);
-    if (event.description) {
-      const desc = document.createElement("div");
-      desc.className = "toast-desc";
-      desc.textContent = event.description;
-      el.appendChild(desc);
-    }
-    addToFeed("score", `+${event.points}`, event.description || event.action);
-  } else if (event.type === "task") {
-    el.className = "toast task";
-    el.textContent = `TASK COMPLETE! +${event.points} BONUS`;
-    addToFeed("score", `+${event.points}`, "task complete");
-  } else if (event.type === "skip_task") {
-    el.className = "toast penalize";
-    const pts = document.createElement("div");
-    pts.className = "toast-points";
-    pts.textContent = `-${event.points} VIBES`;
-    el.appendChild(pts);
-    const desc = document.createElement("div");
-    desc.className = "toast-desc";
-    desc.textContent = "skipped the task";
-    el.appendChild(desc);
-    addToFeed("penalize", `-${event.points}`, "skipped task");
-  } else if (event.type === "penalize") {
-    el.className = "toast penalize";
-    const pts = document.createElement("div");
-    pts.className = "toast-points";
-    pts.textContent = `-${event.points} VIBES`;
-    el.appendChild(pts);
-    const reason = PENALTY_LABELS[event.action] || event.action || "bad vibes";
-    const desc = document.createElement("div");
-    desc.className = "toast-desc";
-    desc.textContent = reason;
-    el.appendChild(desc);
-    addToFeed("penalize", `-${event.points}`, reason);
-  }
-
-  toastContainer.appendChild(el);
-  el.addEventListener("animationend", () => el.remove());
-}
-
-function addToFeed(type, points, label) {
-  const entry = document.createElement("div");
-  entry.className = `feed-entry feed-${type}`;
-  entry.innerHTML = `<span class="feed-points">${points}</span> <span class="feed-label">${label}</span>`;
-  scoreFeed.appendChild(entry);
-
-  // Max 4 entries
-  while (scoreFeed.children.length > 4) {
-    scoreFeed.removeChild(scoreFeed.firstChild);
-  }
-
-  // Auto-fade after 6s
-  setTimeout(() => {
-    entry.classList.add("feed-fade");
-    entry.addEventListener("animationend", () => entry.remove());
-  }, 6000);
-}
-
-function showNarration(text) {
-  narrationText.textContent = `"${text}"`;
-  clearTimeout(showNarration._timer);
-  showNarration._timer = setTimeout(() => {
-    narrationText.textContent = "Awaiting transmission...";
-  }, 8000);
-}
-
-function showGameOver(state) {
-  capturing = false;
-  phase = "idle";
-  hud.classList.remove("active");
-  gameoverScreen.classList.add("active");
-
-  const won = state.vibes >= 400;
-  goTitle.textContent = won ? "ABSOLUTE W" : "RAN OUT OF TIME";
-  goTitle.style.color = won ? "var(--green-400)" : "var(--red-400)";
-
-  goRank.textContent = state.rank;
-  goRank.className = `gameover-rank rank-${state.rank}`;
-
-  goScore.textContent = state.vibes;
-  goStreak.textContent = bestStreak;
-  goMultiplier.textContent = `${bestMultiplier}x`;
-  goTasks.textContent = state.tasksCompleted || 0;
-}
-
-// ── Start / Let's Go / Start Vibing / Replay ────────────
-
-async function letsGo() {
+// -- Start Flow --
+async function connectSilas() {
   startBtn.disabled = true;
-  startBtn.textContent = "LOADING...";
-  startHint.textContent = "grant cam + mic permissions...";
+  startBtn.textContent = "CONNECTING...";
+  startHint.textContent = "grant camera + mic permissions...";
 
   try {
     initAudio();
     await startCamera();
-    startHint.textContent = "camera ready, connecting mic...";
+    startHint.textContent = "camera ready...";
   } catch (err) {
     alert("Camera access required: " + err.message);
     startBtn.disabled = false;
-    startBtn.textContent = "LET'S GO";
-    startHint.textContent = "need your cam + mic fam";
+    startBtn.textContent = "CONNECT";
+    startHint.textContent = "camera + mic required";
     return;
   }
 
@@ -534,51 +379,20 @@ async function letsGo() {
 
   phase = "intro";
   introAudioReceived = false;
-
-  // Start streaming camera immediately so Gemini sees from the start
   capturing = true;
   connectWS();
 }
 
-async function startVibing() {
+function startSession() {
   startBtn.disabled = true;
 
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({ type: "start" }));
-    phase = "playing";
-    bestStreak = 0;
-    bestMultiplier = 1;
-
+    phase = "active";
     startScreen.style.display = "none";
     hud.classList.add("active");
-    // captureLoop already running from letsGo — no need to restart
   }
 }
 
-function replayGame() {
-  gameoverScreen.classList.remove("active");
-  phase = "playing";
-  capturing = true;
-  bestStreak = 0;
-  bestMultiplier = 1;
-  narrationText.textContent = "Awaiting transmission...";
-  narrationNextTime = 0;
-  musicNextTime = 0;
-  taskBar.style.display = "none";
-  scoreFeed.innerHTML = "";
-
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: "start" }));
-    hud.classList.add("active");
-    captureLoop();
-  }
-}
-
-// ── Event Listeners ─────────────────────────────────────
-startBtn.addEventListener("click", letsGo);
-replayBtn.addEventListener("click", replayGame);
-taskSkip.addEventListener("click", () => {
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: "skip_task" }));
-  }
-});
+// -- Event Listeners --
+startBtn.addEventListener("click", connectSilas);

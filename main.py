@@ -1,4 +1,4 @@
-"""JOYBAIT — spread the love game server."""
+"""Silas — gesture-based personal assistant server."""
 
 import asyncio
 import json
@@ -9,7 +9,6 @@ from aiohttp import web
 from dotenv import load_dotenv
 
 # Fix aiohttp tcp_keepalive crash on macOS (OSError: Invalid argument).
-# Must patch on web_protocol since it imports the function by name directly.
 import aiohttp.web_protocol as _wp
 
 _orig_tcp_keepalive = _wp.tcp_keepalive
@@ -39,14 +38,11 @@ logging.basicConfig(
 
 HELP_TEXT = """\
   Commands:
-    start                        — start the game
-    stop                         — stop the game
-    score <action> <pts> [desc]  — simulate a score event
-    penalize <action> <pts>      — simulate a penalty
-    music <mood>                 — change music mood
-    say <text>                   — inject narration text
-    status                       — print current game state
-    help                         — show this message
+    start              — start assistant session
+    stop               — stop assistant session
+    say <text>         — inject narration text
+    status             — print current session state
+    help               — show this message
 """
 
 
@@ -76,55 +72,19 @@ async def _stdin_reader(app: web.Application):
                 print(HELP_TEXT)
 
             elif cmd == "start":
-                await orch.start_game()
-                print("  Game started.")
+                await orch.start_session()
+                print("  Session started.")
 
             elif cmd == "stop":
-                await orch.stop_game()
-                print("  Game stopped.")
-
-            elif cmd == "score":
-                tokens = rest.split(maxsplit=2)
-                if len(tokens) < 2:
-                    print("  Usage: score <action> <points> [description]")
-                    continue
-                action = tokens[0]
-                try:
-                    pts = int(tokens[1])
-                except ValueError:
-                    print("  Points must be a number.")
-                    continue
-                desc = tokens[2] if len(tokens) > 2 else ""
-                orch.inject_score(action, pts, desc)
-                print(f"  Scored: {action} +{pts}")
-
-            elif cmd == "penalize":
-                tokens = rest.split(maxsplit=1)
-                if len(tokens) < 2:
-                    print("  Usage: penalize <action> <points>")
-                    continue
-                action = tokens[0]
-                try:
-                    pts = int(tokens[1])
-                except ValueError:
-                    print("  Points must be a number.")
-                    continue
-                orch.inject_penalize(action, pts)
-                print(f"  Penalized: {action} -{pts}")
-
-            elif cmd == "music":
-                if not rest:
-                    print("  Usage: music <mood>")
-                    continue
-                await orch.inject_music(rest.strip())
-                print(f"  Music mood: {rest.strip()}")
+                await orch.stop_session()
+                print("  Session stopped.")
 
             elif cmd == "say":
                 if not rest:
                     print("  Usage: say <text>")
                     continue
                 await orch.inject_narration(rest)
-                print(f"  Injected narration.")
+                print("  Injected narration.")
 
             elif cmd == "status":
                 status = orch.get_status()
@@ -160,12 +120,11 @@ if __name__ == "__main__":
     app = create_app()
     app.on_startup.append(_start_stdin_reader)
     app.on_cleanup.append(_stop_stdin_reader)
-    print(f"\n  JOYBAIT — spread the love")
+    print(f"\n  SILAS — personal assistant")
     print(f"  Server: http://{HOST}:{PORT}")
     print(f"  Open on phone: http://<your-ip>:{PORT}")
     print()
-    print("  Routes:")
-    print("    /      — JOYBAIT")
+    print("  Gestures: open_palm=note, peace=email, point_up=calendar, wave=meeting, ok=send")
     print()
     print("  Cloudflare: run 'cloudflared tunnel --url http://localhost:8080'")
     print("  Type 'help' for terminal commands.\n")

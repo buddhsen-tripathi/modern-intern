@@ -14,13 +14,13 @@ log = logging.getLogger(__name__)
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 
-async def ws_game_handler(request: web.Request):
-    ws = web.WebSocketResponse(max_msg_size=4 * 1024 * 1024)  # 4 MB for JPEG frames
+async def ws_handler(request: web.Request):
+    ws = web.WebSocketResponse(max_msg_size=4 * 1024 * 1024)
     await ws.prepare(request)
 
     orch: Orchestrator = request.app["orchestrator"]
     orch.display.set_websocket(ws)
-    log.info("Phone connected via WebSocket")
+    log.info("Client connected via WebSocket")
 
     try:
         async for msg in ws:
@@ -28,14 +28,16 @@ async def ws_game_handler(request: web.Request):
                 try:
                     data = json.loads(msg.data)
                     cmd = data.get("type")
-                    if cmd == "intro":
-                        await orch.play_intro()
+                    if cmd == "connect":
+                        await orch.connect()
                     elif cmd == "start":
-                        await orch.start_game()
+                        await orch.start_session()
                     elif cmd == "stop":
-                        await orch.stop_game()
-                    elif cmd == "skip_task":
-                        orch.skip_task()
+                        await orch.stop_session()
+                    elif cmd == "action":
+                        action = data.get("action", "")
+                        params = data.get("params", {})
+                        await orch._on_action(action, params)
                 except json.JSONDecodeError:
                     log.warning("Bad JSON from client")
 
@@ -54,8 +56,8 @@ async def ws_game_handler(request: web.Request):
     finally:
         orch.display.clear_websocket()
         if orch._started or orch.gemini.connected:
-            await orch.stop_game()
-        log.info("Phone disconnected")
+            await orch.stop_session()
+        log.info("Client disconnected")
 
     return ws
 
@@ -69,7 +71,7 @@ def create_app() -> web.Application:
     app["orchestrator"] = Orchestrator()
 
     app.router.add_get("/", index_handler)
-    app.router.add_get("/ws/game", ws_game_handler)
+    app.router.add_get("/ws", ws_handler)
     app.router.add_static("/static/", ROOT / "static")
 
     return app

@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>JOYBAIT</title>
+  <title>Silas</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
@@ -18,118 +18,71 @@
   <div id="start-screen">
     <div class="start-content">
       <div class="start-logo">
-        <div class="logo-icon">&#x1F525;</div>
-        <div class="start-title">JOYBAIT</div>
-        <div class="start-subtitle">SPREAD THE LOVE</div>
+        <div class="logo-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"/>
+            <path d="M12 16v-4M12 8h.01"/>
+          </svg>
+        </div>
+        <div class="start-title">SILAS</div>
+        <div class="start-subtitle">PERSONAL ASSISTANT</div>
       </div>
 
       <div class="intro-area" id="intro-area">
         <div class="intro-text" id="intro-text"></div>
       </div>
 
-      <button id="start-btn" class="btn-primary">LET'S GO</button>
-      <div class="start-hint" id="start-hint">need your cam + mic fam</div>
+      <button id="start-btn" class="btn-primary">CONNECT</button>
+      <div class="start-hint" id="start-hint">camera + mic required</div>
+
+      <div class="gesture-guide">
+        <div class="gesture-guide-title">GESTURES</div>
+        <div class="gesture-list">
+          <div class="gesture-item"><span class="gesture-icon">&#9995;</span> <span>Note</span></div>
+          <div class="gesture-item"><span class="gesture-icon">&#9996;</span> <span>Email</span></div>
+          <div class="gesture-item"><span class="gesture-icon">&#9757;</span> <span>Calendar</span></div>
+          <div class="gesture-item"><span class="gesture-icon">&#128075;</span> <span>Meeting</span></div>
+          <div class="gesture-item"><span class="gesture-icon">&#128076;</span> <span>Send</span></div>
+          <div class="gesture-item"><span class="gesture-icon">&#128077;</span> <span>Confirm</span></div>
+        </div>
+      </div>
     </div>
   </div>
 
-  <!-- HUD overlay (shown during game) -->
+  <!-- HUD overlay (shown during session) -->
   <div id="hud">
     <!-- Top bar -->
     <div class="hud-top">
       <div class="hud-top-left">
-        <div class="timer-container">
-          <svg class="timer-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
-          </svg>
-          <span class="timer" id="timer">3:00</span>
-        </div>
-      </div>
-      <div class="hud-top-center">
-        <div class="streak-container" id="streak-container">
-          <span class="streak-label">STREAK</span>
-          <span class="streak-count" id="streak-count">0</span>
-          <span class="multiplier" id="multiplier">1x</span>
+        <div class="status-pill" id="status-pill">
+          <div class="status-dot"></div>
+          <span>ACTIVE</span>
         </div>
       </div>
       <div class="hud-top-right">
-        <div id="rank-badge" class="rank-badge rank-Basic">
-          <span class="rank-icon">&#9830;</span>
-          <span class="rank-text">Basic</span>
+        <div class="gesture-badge" id="gesture-badge">
+          <span class="gesture-badge-icon" id="gesture-badge-icon"></span>
+          <span class="gesture-badge-text" id="gesture-badge-text"></span>
         </div>
       </div>
     </div>
 
-    <!-- Toasts (middle area) -->
+    <!-- Action notifications (middle area) -->
     <div class="hud-mid">
       <div id="toast-container"></div>
     </div>
 
-    <!-- Bottom: vibes bar + task bar + narration -->
+    <!-- Bottom: activity feed + narration -->
     <div class="hud-bottom">
-      <div class="score-feed" id="score-feed"></div>
-      <div class="vibes-container">
-        <div class="vibes-header">
-          <span class="vibes-label">VIBES</span>
-          <span class="vibes-value" id="vibes-value">0</span>
-        </div>
-        <div class="vibes-bar-track">
-          <div class="vibes-bar-fill" id="vibes-fill"></div>
-          <div class="vibes-bar-glow" id="vibes-glow"></div>
-        </div>
-        <div class="vibes-markers">
-          <span>0</span><span>250</span><span>500</span><span>750</span><span>1000</span>
-        </div>
-      </div>
-      <div class="task-bar" id="task-bar" style="display:none">
-        <span class="task-label">TASK</span>
-        <span class="task-text" id="task-text"></span>
-        <span class="task-bonus" id="task-bonus"></span>
-        <button class="task-skip" id="task-skip">SKIP (-2)</button>
-      </div>
+      <div class="activity-feed" id="activity-feed"></div>
       <div class="narration-bar">
         <div class="narration-indicator">
           <div class="mic-indicator" id="mic-dot"></div>
           <span class="narration-label">SILAS</span>
         </div>
-        <div class="narration-text" id="narration-text">Awaiting transmission...</div>
+        <div class="narration-text" id="narration-text">Listening...</div>
         <div class="voice-status" id="voice-status"></div>
       </div>
-    </div>
-  </div>
-
-  <!-- Game over screen -->
-  <div id="gameover-screen">
-    <div class="gameover-content">
-      <div class="gameover-header">
-        <div class="gameover-title" id="go-title">ABSOLUTE W</div>
-        <div class="gameover-divider"></div>
-      </div>
-
-      <div class="gameover-rank-display">
-        <div class="gameover-rank rank-Basic" id="go-rank">Basic</div>
-      </div>
-
-      <div class="gameover-score-area">
-        <div class="gameover-score" id="go-score">0</div>
-        <div class="gameover-score-label">VIBES COLLECTED</div>
-      </div>
-
-      <div class="gameover-stats">
-        <div class="stat-card">
-          <div class="stat-value" id="go-best-streak">0</div>
-          <div class="stat-label">BEST STREAK</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-value" id="go-multiplier">1x</div>
-          <div class="stat-label">TOP MULTI</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-value" id="go-tasks">0</div>
-          <div class="stat-label">TASKS DONE</div>
-        </div>
-      </div>
-
-      <button id="replay-btn" class="btn-secondary">RUN IT BACK</button>
     </div>
   </div>
 

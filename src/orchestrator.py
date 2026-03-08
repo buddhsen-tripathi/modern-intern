@@ -1,15 +1,28 @@
-"""Orchestrator: wires all services and routes events between them."""
+"""Orchestrator: central brain that routes gestures and voice commands to agents."""
 
 import logging
 import os
+import time
 
+from src.agents.calendar_agent import CalendarAgent
+from src.agents.email_agent import EmailAgent
+from src.agents.meeting_agent import MeetingAgent
+from src.agents.note_agent import NoteAgent
+from src.config import GESTURE_COOLDOWN_SEC
 from src.display.web_display import WebDisplayService
-from src.services.game_brain import GameBrainService
-from src.services.game_state import GameStateManager
 from src.services.gemini_service import GeminiService
-from src.services.lyria_service import LyriaService
 
 log = logging.getLogger(__name__)
+
+# Map gestures to default action types
+GESTURE_ACTION_MAP = {
+    "open_palm": "note",
+    "peace_sign": "draft_email",
+    "point_up": "calendar_event",
+    "wave": "meeting_minutes",
+    "ok_sign": "send_email",
+    "thumbs_up": None,  # confirmation only, no auto-action
+}
 
 
 class Orchestrator:
@@ -19,71 +32,60 @@ class Orchestrator:
             raise RuntimeError("GEMINI_API_KEY not set in environment")
 
         self.display = WebDisplayService()
-        self.game = GameStateManager()
         self.gemini = GeminiService(api_key)
-        self.lyria = LyriaService(api_key)
-        self.brain = GameBrainService(api_key)
         self._started = False
-        self._final_minute_triggered = False
 
-        # Wire Gemini Live API callbacks
-        # Audio + narration text still come from Live API (latency-sensitive)
-        # Scoring tags from Live API are kept as a fallback; brain handles primary scoring
+        # Agents
+        self._note_agent = NoteAgent()
+        self._meeting_agent = MeetingAgent(api_key)
+        self._email_agent = EmailAgent()
+        self._calendar_agent = CalendarAgent()
+
+        # Agent routing table
+        self._agents = {
+            "note": self._note_agent,
+            "meeting_minutes": self._meeting_agent,
+            "draft_email": self._email_agent,
+            "send_email": self._email_agent,
+            "read_email": self._email_agent,
+            "calendar_event": self._calendar_agent,
+        }
+
+        # Gesture cooldown tracking
+        self._last_gesture_time: float = 0.0
+
+        # Recent observations for agent context
+        self._observations: list[str] = []
+        self._max_observations = 20
+
+        # Wire Gemini callbacks
         self.gemini.set_callbacks(
             on_audio=self._on_narration_audio,
             on_narration=self._on_narration_text,
-            on_score=self._on_score,
-            on_penalize=self._on_penalize,
-            on_music=self._on_music,
-            on_task=self._on_task,
+            on_gesture=self._on_gesture,
+            on_action=self._on_action,
             on_vad_state=self._on_vad_state,
         )
-        self.gemini.set_game_state_fn(self.game.to_dict)
 
-        # Brain is passive memory — no scoring callbacks
-        self.brain.set_game_state_fn(self.game.to_dict)
-
-        # Give Gemini access to brain for contextual nudges and reconnect
-        self.gemini.set_brain(self.brain)
-
-        # Wire GameState callbacks
-        self.game.set_callbacks(
-            on_state_change=self._on_state_change,
-            on_event=self._on_event,
-        )
-
-        # Wire Lyria callbacks
-        self.lyria.set_callbacks(
-            on_audio=self._on_music_audio,
-        )
-
-    async def play_intro(self):
-        """Connect to Gemini and play intro narration only."""
+    async def connect(self):
+        """Connect to Gemini and play intro."""
         if self.gemini.connected:
             return
-        log.info("Playing intro narration...")
-        await self.gemini.connect_and_intro()
+        await self.gemini.connect()
 
-    async def start_game(self):
+    async def start_session(self):
         if self._started:
             return
         self._started = True
-        self._final_minute_triggered = False
-        log.info("Starting game...")
-        self.brain.start()
-        await self.gemini.begin_game()
-        await self.lyria.start()
-        self.game.start()
+        log.info("Starting session...")
+        await self.gemini.start_session()
 
-    async def stop_game(self):
+    async def stop_session(self):
         if not self._started and not self.gemini.connected:
             return
         self._started = False
-        log.info("Stopping game...")
-        self.game.stop()
+        log.info("Stopping session...")
         await self.gemini.stop()
-        await self.lyria.stop()
-        await self.brain.stop()
 
     async def handle_video_frame(self, jpeg_bytes: bytes):
         await self.gemini.send_video_frame(jpeg_bytes)
@@ -98,76 +100,96 @@ class Orchestrator:
 
     async def _on_narration_text(self, text: str):
         await self.display.send_narration_text(text)
-        # Feed narration text to brain as an observation
-        self.brain.record_observation(text)
+        # Feed to meeting agent if recording
+        self._meeting_agent.add_entry(text)
+        # Track observations for agent context
+        self._observations.append(text)
+        if len(self._observations) > self._max_observations:
+            self._observations.pop(0)
 
-    async def _on_score(self, action: str, points: int, description: str):
-        """Score from Live API tags — single scoring pipeline."""
-        self.game.score(action, points, description)
-        self.brain.record_score(action, points, description)
+    async def _on_gesture(self, gesture: str):
+        now = time.monotonic()
+        if now - self._last_gesture_time < GESTURE_COOLDOWN_SEC:
+            log.info("Gesture %s ignored (cooldown)", gesture)
+            return
+        self._last_gesture_time = now
 
-    async def _on_penalize(self, action: str, points: int):
-        """Penalty from Live API tags — single scoring pipeline."""
-        self.game.penalize(action, points)
-        self.brain.record_penalty(action, points)
+        log.info("Gesture detected: %s", gesture)
+        await self.display.send_event({
+            "type": "gesture",
+            "gesture": gesture,
+        })
 
-    async def _on_music(self, mood: str):
-        await self.lyria.set_mood(mood)
-        self.brain.record_mood_change(mood)
+        # Auto-trigger default action for gesture (if no explicit ACTION tag follows)
+        action_type = GESTURE_ACTION_MAP.get(gesture)
+        if action_type:
+            # Build context-aware params from recent observations
+            context_text = " ".join(self._observations[-5:]) if self._observations else ""
+            params = self._build_gesture_params(action_type, context_text)
+            await self._on_action(action_type, params)
 
-    def skip_task(self):
-        self.game.skip_task()
+    def _build_gesture_params(self, action_type: str, context: str) -> dict:
+        """Build reasonable default params for gesture-triggered actions."""
+        if action_type == "note":
+            return {"content": context or "Note taken via gesture."}
+        elif action_type == "meeting_minutes":
+            # Toggle: start if not recording, stop if recording
+            cmd = "stop" if self._meeting_agent.recording else "start"
+            return {"command": cmd}
+        elif action_type == "draft_email":
+            return {"to": "", "subject": "", "body": context}
+        elif action_type == "send_email":
+            return {}
+        elif action_type == "calendar_event":
+            return {"title": context[:60] if context else "New Event"}
+        return {}
 
-    async def _on_task(self, text: str, bonus: int):
-        self.game.set_task(text, bonus)
-        self.brain.record_task(text, bonus)
-        await self.display.send_event({"type": "task", "text": text, "bonus": bonus})
+    async def _on_action(self, action_type: str, params: dict):
+        agent = self._agents.get(action_type)
+        if not agent:
+            log.warning("No agent for action: %s", action_type)
+            return
 
-    async def _on_state_change(self, state: dict):
-        await self.display.send_state(state)
-        # Auto-trigger final_minute music and game over mood
-        timer = state.get("timer", 999)
-        if timer <= 60 and not self._final_minute_triggered:
-            self._final_minute_triggered = True
-            await self.lyria.set_mood("final_minute")
-        if state.get("gameOver"):
-            mood = "victory" if state.get("vibes", 0) >= 400 else "defeat"
-            await self.lyria.set_mood(mood)
+        # Build context for agent
+        context = {
+            "recent_observations": self._observations[-5:],
+            "session_active": self._started,
+        }
 
-    async def _on_event(self, event: dict):
-        await self.display.send_event(event)
+        # Email agent needs to know the sub-action
+        if action_type in ("draft_email", "send_email", "read_email"):
+            sub_map = {
+                "draft_email": "draft",
+                "send_email": "send",
+                "read_email": "read",
+            }
+            context["sub_action"] = sub_map[action_type]
+
+        log.info("Executing agent: %s (%s)", agent.name, action_type)
+        result = await agent.execute(params, context)
+        log.info("Agent result: %s", result.get("message", ""))
+
+        # Send result to display
+        await self.display.send_event({
+            "type": "action_result",
+            "action": action_type,
+            "agent": agent.name,
+            **result,
+        })
 
     async def _on_vad_state(self, state: str):
         await self.display.send_vad_state(state)
-        if state == "LISTENING":
-            self.brain.record_player_speech()
-
-    async def _on_music_audio(self, audio_bytes: bytes):
-        await self.display.send_music_audio(audio_bytes)
 
     # -- Terminal command helpers --
 
     async def inject_narration(self, text: str):
         await self.gemini.inject_narration(text)
 
-    def inject_score(self, action: str, points: int, desc: str = ""):
-        self.game.score(action, points, desc)
-        self.brain.record_score(action, points, desc)
-        log.info("Injected SCORE: %s +%d -- %s", action, points, desc)
-
-    def inject_penalize(self, action: str, points: int):
-        self.game.penalize(action, points)
-        self.brain.record_penalty(action, points)
-        log.info("Injected PENALIZE: %s -%d", action, points)
-
-    async def inject_music(self, mood: str):
-        await self.lyria.set_mood(mood)
-        self.brain.record_mood_change(mood)
-        log.info("Injected MUSIC: %s", mood)
-
     def get_status(self) -> dict:
         return {
             "started": self._started,
-            "game": self.game.to_dict(),
-            "brain_context": self.brain.get_context_summary(),
+            "meeting_recording": self._meeting_agent.recording,
+            "notes_count": len(self._note_agent.get_notes()),
+            "events_count": len(self._calendar_agent.get_events()),
+            "observations": len(self._observations),
         }

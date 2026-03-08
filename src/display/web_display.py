@@ -1,4 +1,4 @@
-"""Web display service — sends game state + audio over WebSocket."""
+"""Web display service — sends assistant state + audio over WebSocket."""
 
 import json
 import logging
@@ -6,7 +6,7 @@ import struct
 
 from aiohttp import web
 
-from src.config import TAG_MUSIC_AUDIO, TAG_NARRATION_AUDIO
+from src.config import TAG_NARRATION_AUDIO
 from src.display.base import DisplayService
 
 log = logging.getLogger(__name__)
@@ -37,9 +37,6 @@ class WebDisplayService(DisplayService):
 
     async def send_narration_audio(self, audio_bytes: bytes):
         await self._send_binary(TAG_NARRATION_AUDIO, audio_bytes)
-
-    async def send_music_audio(self, audio_bytes: bytes):
-        await self._send_binary(TAG_MUSIC_AUDIO, audio_bytes)
 
     async def send_vad_state(self, state: str):
         await self._send_json({"type": "vad_state", "state": state})

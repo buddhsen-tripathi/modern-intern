@@ -1,4 +1,4 @@
-"""Gemini Live API service with VAD for voice chat."""
+"""Gemini Live API service with VAD — personal assistant mode."""
 
 import asyncio
 import logging
@@ -13,112 +13,100 @@ from src.config import (
     GEMINI_MODEL,
     GEMINI_VOICE,
     MIC_SAMPLE_RATE,
-    NUDGE_ACTIVE_INTERVAL,
-    NUDGE_FINAL_MINUTE_INTERVAL,
-    NUDGE_IDLE_INTERVAL,
-    NUDGE_POST_TASK_DELAY,
-    NUDGE_RESUME_DELAY,
     SPEECH_ONSET_SEC,
     SILENCE_TIMEOUT_SEC,
     VAD_AGGRESSIVENESS,
     VAD_CHUNK_SIZE,
+    WATCHER_ACTIVE_INTERVAL,
+    WATCHER_IDLE_INTERVAL,
+    WATCHER_RESUME_DELAY,
 )
 
 log = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """\
-You are SILAS — the player's friend and wingman in "JOYBAIT,"
-an AR game where the player earns vibes by being social with strangers.
+You are SILAS — a smart personal assistant that sees and hears through the user's phone.
 
-PERSONALITY: Chill, warm, quick. Talk like a real friend — natural, not forced.
-Light slang is fine but don't overdo it. ONE sentence replies, two max.
-Never sound like a narrator, announcer, or NPC.
+PERSONALITY: Calm, efficient, helpful. Talk like a capable assistant — concise and clear.
+ONE sentence replies, two max. No fluff.
 
-─── WHAT YOU SEE AND HEAR ─────────────────────────────────────
-The player is holding their phone with the REAR camera facing outward.
-You see what's IN FRONT of the player — their surroundings, other people,
-the environment. You CANNOT see the player themselves.
+─── WHAT YOU SEE AND HEAR ─────────────────────────────────
+The user is holding their phone with the REAR camera facing outward.
+You see what's IN FRONT of the user — their surroundings, people, whiteboards,
+documents, screens, the environment. You CANNOT see the user themselves.
 
-You also hear the player's microphone, which picks up their voice
-and ambient audio (other people talking, laughter, background noise).
+You also hear the user's microphone, which picks up their voice
+and ambient audio (other people talking, meetings, background noise).
 
-To understand what the PLAYER is doing, combine:
-• AUDIO — you hear the player speak, greet people, laugh, converse
-• CAMERA — you see who the player is near, approaching, or facing
-• CONTEXT — camera movement toward people = approaching; voices in
-  conversation = player is talking to someone; staying still = idle
+─── CONVERSATION (your main job) ──────────────────────────
+When the user speaks to you, RESPOND. You're their assistant.
+1. Reply concisely — ONE sentence preferred
+2. If they ask you to do something, acknowledge and emit the appropriate ACTION tag
+3. After responding, go QUIET — wait for them to speak again
 
-─── CONVERSATION (your main job) ──────────────────────────────
-When the player speaks to you, RESPOND. You're their friend.
-1. Reply as Silas — natural, brief, ONE sentence preferred
-2. Supportive and fun, not over-the-top
-3. If they ask about the game, give quick tips
-4. If their speech involves a social action, include a scoring tag
-5. After responding, go QUIET — wait for them to speak again
+─── GESTURE RECOGNITION ───────────────────────────────────
+Watch the camera feed for these hand gestures:
+• THUMBS UP — confirm / acknowledge current action
+• OPEN PALM (stop hand) — take a note of what was just said or seen
+• PEACE SIGN (two fingers) — email related action
+• POINTING UP (index finger) — create a calendar event
+• WAVE — start or stop taking meeting minutes
+• OK SIGN (thumb+index circle) — send / confirm action
 
-─── SCOREKEEPER (background, silent) ──────────────────────────
-You will receive periodic check-in prompts asking you to observe the scene.
-- If a prompt says "TAGS ONLY": respond ONLY with scoring tags.
-  Do NOT speak, do NOT narrate. Just emit the tags as text.
-  Example response: <<PENALIZE idle 5>>
-- If a prompt says to check in: give ONE short sentence + tags.
+When you detect a gesture, emit a <<GESTURE>> tag.
 
-SCORING TAGS — emit on their own line:
+─── ACTION TAGS ────────────────────────────────────────────
+Emit these on their own line based on gestures OR voice commands:
 
-<<SCORE action_type points description>>
-action_types: greeting, introduction, laughter, compliment, helping,
-high_five, sharing, group_conversation, teaching (10-30 pts)
-Score based on what you HEAR (player speaking, laughing, conversation)
-combined with what you SEE (people nearby, reactions, social context).
+<<GESTURE gesture_name>>
+gesture_name: thumbs_up, open_palm, peace_sign, point_up, wave, ok_sign
+Emit when you visually detect a gesture in the camera feed.
 
-<<PENALIZE action_type points>>
-action_types: idle, avoiding_people, walking_away, ignoring, prolonged_silence (5-20 pts)
-"idle" = no social activity for a while (static scene, no conversation audio).
-"avoiding_people" = camera shows people nearby but player isn't engaging.
-Do NOT penalize for "phone_staring" — the player holds the phone to play.
+<<ACTION action_type json_params>>
+action_type and when to emit:
 
-<<MUSIC mood>>
-moods: idle, approaching, action_scored, streak, legendary, draining,
-final_minute, victory, defeat
+  note — user asks to take a note, or open_palm gesture
+    params: {"content": "the note text"}
 
-<<TASK task_description bonus_points>>
-Assign mini-challenges to keep the player engaged. Examples:
-"say hi to someone nearby" 15, "ask someone about their day" 20,
-"start a convo with someone new" 25, "make someone laugh" 20,
-"compliment someone" 15, "introduce yourself to a group" 25.
-Drop a task when the player seems idle or needs motivation.
+  meeting_minutes — user says "take minutes" or wave gesture
+    params: {"command": "start"} or {"command": "stop"}
+
+  draft_email — user asks to draft an email, or peace_sign gesture
+    params: {"to": "recipient", "subject": "subject line", "body": "email body"}
+    Fill in what you can from conversation context. Use "" for unknown fields.
+
+  send_email — user says "send it" or ok_sign gesture after drafting
+    params: {}
+
+  read_email — user asks to read/check email
+    params: {"count": 5}
+
+  calendar_event — user asks to schedule something, or point_up gesture
+    params: {"title": "event title", "start": "ISO datetime", "duration_minutes": 30, "description": ""}
+    Infer details from conversation. Use reasonable defaults.
 
 RULES:
-- NEVER say "penalize", "penalty", or "points deducted" aloud.
-- NEVER announce tags. Don't say "I'm scoring you."
-- Tags are silent metadata — the player sees score changes on screen.
-- Never narrate private conversation content.
-- When told "TAGS ONLY", emit ONLY tags with zero spoken words.
-- Keep it natural. No announcer energy.
-- Remember: you see outward, not the player. Judge by audio + scene context."""
+- NEVER announce tags aloud. Don't say "I'm creating an action tag."
+- Tags are silent metadata — the user sees results on screen.
+- When you detect a gesture, briefly acknowledge it naturally
+  (e.g., "Got it, noting that down" for open_palm)
+- Combine gesture + recent voice context to fill ACTION params intelligently
+- When told "CHECK ONLY", observe the scene silently and only emit tags if relevant. No spoken words.
+- If a gesture is ambiguous, ask the user what they'd like to do."""
 
-SCORE_RE = re.compile(r"<<SCORE\s+(\w+)\s+(\d+)\s+(.+?)>>")
-PENALIZE_RE = re.compile(r"<<PENALIZE\s+(\w+)\s+(\d+)>>")
-MUSIC_RE = re.compile(r"<<MUSIC\s+(\w+)>>")
-TASK_RE = re.compile(r"<<TASK\s+(.+?)\s+(\d+)>>")
+GESTURE_RE = re.compile(r"<<GESTURE\s+(\w+)>>")
+ACTION_RE = re.compile(r"<<ACTION\s+(\w+)\s+(\{.*?\})>>", re.DOTALL)
 
-# Narration nudges — used before the player has spoken (narrator mode)
-NARRATE_PROMPTS = [
-    "check in — what do you see and hear? anyone nearby? score or penalize. drop a task if needed.",
-    "quick look — hear any conversation? see people around? tag it. task if idle.",
-    "any social audio? people in view? score or penalize accordingly. task if they need a push.",
-    "check-in: hear the player talking to someone, or is it quiet? see people or empty scene? tag it.",
-]
-
-# Silent tag-only nudges — used once the player is interacting (conversation mode)
-TAGS_ONLY_PROMPTS = [
-    "TAGS ONLY. listen for conversation and check the scene. score or penalize. no talking.",
-    "TAGS ONLY. any voices? people in frame? tag what you detect. say nothing.",
-    "TAGS ONLY. audio + scene check. emit tags. no words.",
+# Watcher prompts — periodic scene check-ins
+WATCHER_PROMPTS = [
+    "CHECK ONLY. Glance at the scene and listen. Any gestures? Any context worth noting? Emit tags only if relevant.",
+    "CHECK ONLY. Quick look — any hand gestures visible? Any voice requests? Tags only, no talking.",
+    "CHECK ONLY. Scene + audio check. Gestures? Requests? Tag if needed, otherwise stay quiet.",
 ]
 
 MAX_RECONNECT_ATTEMPTS = 5
 MAX_OBSERVATION_BUFFER = 10
+
 
 class GeminiService:
     def __init__(self, api_key: str):
@@ -136,53 +124,31 @@ class GeminiService:
         self._pending_buffer = []
         self._silence = b"\x00" * VAD_CHUNK_SIZE * 2
 
-        # Nudger-pause state
-        self._nudger_paused = False
+        # Watcher-pause state
+        self._watcher_paused = False
         self._player_stopped_speaking_at = 0.0
-        self._player_interacted = False  # True once player has spoken at least once
+        self._user_interacted = False
 
-        # Observation buffer for multi-turn context
+        # Observation buffer for context
         self._observation_buffer: list[str] = []
-
-        # Game state reference (set by orchestrator)
-        self._game_state_fn = None
 
         # Callbacks
         self._on_audio = None
         self._on_narration = None
-        self._on_score = None
-        self._on_penalize = None
-        self._on_music = None
-        self._on_task = None
+        self._on_gesture = None
+        self._on_action = None
         self._on_vad_state = None
 
         self._receive_task = None
-        self._nudge_task = None
-
-        # Game Brain reference (set by orchestrator)
-        self._brain = None
-
-        # Track last score time for adaptive nudge intervals
-        self._last_score_time = 0.0
+        self._watcher_task = None
 
     def set_callbacks(self, on_audio=None, on_narration=None,
-                      on_score=None, on_penalize=None, on_music=None,
-                      on_task=None, on_vad_state=None):
+                      on_gesture=None, on_action=None, on_vad_state=None):
         self._on_audio = on_audio
         self._on_narration = on_narration
-        self._on_score = on_score
-        self._on_penalize = on_penalize
-        self._on_music = on_music
-        self._on_task = on_task
+        self._on_gesture = on_gesture
+        self._on_action = on_action
         self._on_vad_state = on_vad_state
-
-    def set_game_state_fn(self, fn):
-        """Set a callable that returns current game state dict."""
-        self._game_state_fn = fn
-
-    def set_brain(self, brain):
-        """Set the GameBrainService reference for contextual nudges and reconnect."""
-        self._brain = brain
 
     @property
     def connected(self) -> bool:
@@ -206,8 +172,8 @@ class GeminiService:
             ),
         )
 
-    async def connect_and_intro(self):
-        """Connect to Gemini and play the intro narration only."""
+    async def connect(self):
+        """Connect to Gemini and play intro."""
         log.info("Connecting to Gemini Live API...")
         self._observation_buffer.clear()
         config = self._build_live_config()
@@ -223,49 +189,38 @@ class GeminiService:
                 role="user",
                 parts=[types.Part(text=(
                     "Introduce yourself as Silas in one short sentence. "
-                    "Chill and friendly. No scoring tags yet — just the intro."
+                    "You're a personal assistant ready to help. "
+                    "Calm and efficient. No action tags yet — just the intro."
                 ))],
             ),
             turn_complete=True,
         )
-        log.info("Sent intro prompt (trigger=intro)")
-
+        log.info("Sent intro prompt")
         self._receive_task = asyncio.create_task(self._receive_loop())
 
-    async def begin_game(self):
-        """Start the game loop — nudger + game-start prompt.
-
-        Assumes connect_and_intro() was already called.
-        If not connected yet, does a full connect first.
-        """
+    async def start_session(self):
+        """Start watching for gestures and voice commands."""
         if not self.connected:
-            await self.connect_and_intro()
+            await self.connect()
             await asyncio.sleep(1)
 
         await self._session.send_client_content(
             turns=types.Content(
                 role="user",
                 parts=[types.Part(text=(
-                    "The game is starting NOW. Begin observing the video feed "
-                    "and vibing. Include <<SCORE>>, <<PENALIZE>>, <<MUSIC>>, "
-                    "and <<TASK>> tags in your text output. Go!"
+                    "Session is active. Begin watching the video feed for hand gestures "
+                    "and listening for voice commands. Emit <<GESTURE>> and <<ACTION>> "
+                    "tags when appropriate. Go."
                 ))],
             ),
             turn_complete=True,
         )
-        log.info("Sent game_start prompt (trigger=game_start)")
-
-        self._nudge_task = asyncio.create_task(self._nudger())
-
-    async def start(self):
-        """Full start: connect + intro + begin game (legacy/terminal use)."""
-        await self.connect_and_intro()
-        await asyncio.sleep(1)
-        await self.begin_game()
+        log.info("Session started — watching for gestures and commands")
+        self._watcher_task = asyncio.create_task(self._watcher())
 
     async def stop(self):
         self._running = False
-        for task in (self._receive_task, self._nudge_task):
+        for task in (self._receive_task, self._watcher_task):
             if task:
                 task.cancel()
         if self._ctx:
@@ -287,7 +242,6 @@ class GeminiService:
             log.error(f"Error sending video: {e}")
 
     def _fire_vad_state(self, state: str):
-        """Fire VAD state callback if registered."""
         if self._on_vad_state:
             asyncio.create_task(self._on_vad_state(state))
 
@@ -305,7 +259,6 @@ class GeminiService:
 
         prev_state = self._mic_state
 
-        # Mute while Gemini is speaking
         if self._gemini_speaking:
             await self._send_silence()
             if self._mic_state != "IDLE":
@@ -332,11 +285,9 @@ class GeminiService:
                     self._pending_buffer = []
                     self._last_speech = now
                     self._mic_state = "LISTENING"
-                    # Pause the nudger while player is speaking
-                    self._nudger_paused = True
-                    if not self._player_interacted:
-                        self._player_interacted = True
-                        log.info("Player interacted — nudger switching to tags-only mode")
+                    self._watcher_paused = True
+                    if not self._user_interacted:
+                        self._user_interacted = True
             else:
                 if now - self._speech_start > SPEECH_ONSET_SEC:
                     self._pending_buffer = []
@@ -348,21 +299,13 @@ class GeminiService:
                 self._last_speech = now
             if now - self._last_speech > SILENCE_TIMEOUT_SEC:
                 self._mic_state = "IDLE"
-                # Record when player stopped speaking for nudger resume delay
                 self._player_stopped_speaking_at = now
-                # Signal Gemini that the player finished speaking
-                asyncio.create_task(self._signal_player_done())
+                asyncio.create_task(self._signal_user_done())
 
-        # Fire VAD state callback on state change
         if self._mic_state != prev_state:
             self._fire_vad_state(self._mic_state)
 
-    async def _signal_player_done(self):
-        """Send lightweight turn-complete signal after the player stops speaking.
-
-        The Live API already has the audio context so we just nudge it to
-        respond rather than injecting redundant text instructions.
-        """
+    async def _signal_user_done(self):
         if not self._session or not self._running:
             return
         try:
@@ -373,12 +316,10 @@ class GeminiService:
                 ),
                 turn_complete=True,
             )
-            log.info("Sent player-done signal (trigger=player_speech)")
         except Exception as e:
-            log.error(f"Error sending player-done signal: {e}")
+            log.error(f"Error sending user-done signal: {e}")
 
     async def inject_narration(self, text: str):
-        """Inject text as if Gemini said it — for terminal testing."""
         log.info("NARRATION (injected): %s", text)
         self._parse_and_dispatch(text, trigger="injected")
 
@@ -428,7 +369,6 @@ class GeminiService:
                                     )
                                 text_buf = ""
 
-                    # If receive() ends cleanly, reset error count
                     consecutive_errors = 0
 
                 except Exception as e:
@@ -440,11 +380,7 @@ class GeminiService:
                         consecutive_errors, MAX_RECONNECT_ATTEMPTS, e,
                     )
                     if consecutive_errors >= MAX_RECONNECT_ATTEMPTS:
-                        log.warning(
-                            "Gemini disconnected after %d errors, "
-                            "attempting full reconnect...",
-                            consecutive_errors,
-                        )
+                        log.warning("Attempting full reconnect...")
                         await self._reconnect()
                         consecutive_errors = 0
                     else:
@@ -453,7 +389,6 @@ class GeminiService:
             pass
 
     async def _reconnect(self):
-        """Close and reopen the Gemini WebSocket session with context restoration."""
         if self._ctx:
             try:
                 await self._ctx.__aexit__(None, None, None)
@@ -466,161 +401,82 @@ class GeminiService:
             )
             self._session = await self._ctx.__aenter__()
             log.info("Gemini reconnected successfully")
-
-            # Restore context from Game Brain if available
-            if self._brain:
-                try:
-                    context = await self._brain.get_restoration_context()
-                    await self._session.send_client_content(
-                        turns=types.Content(
-                            role="user",
-                            parts=[types.Part(text=(
-                                f"Session restored. Continue the game seamlessly.\n\n"
-                                f"Context from before disconnect:\n{context}"
-                            ))],
-                        ),
-                        turn_complete=True,
-                    )
-                    log.info("Restored game context via Game Brain after reconnect")
-                except Exception as ce:
-                    log.error("Context restoration failed: %s", ce)
-
         except Exception as e:
             log.error("Gemini reconnect failed: %s", e)
             await asyncio.sleep(5.0)
 
     def _parse_and_dispatch(self, text: str, trigger: str = "unknown"):
-        # Clean narration text (strip tags for display)
-        display = SCORE_RE.sub("", text)
-        display = PENALIZE_RE.sub("", display)
-        display = MUSIC_RE.sub("", display)
-        display = TASK_RE.sub("", display).strip()
+        # Strip tags for display
+        display = GESTURE_RE.sub("", text)
+        display = ACTION_RE.sub("", display).strip()
         if display:
             log.info("NARRATION (trigger=%s): %s", trigger, display)
-            # Store in observation buffer
             self._observation_buffer.append(display)
             if len(self._observation_buffer) > MAX_OBSERVATION_BUFFER:
                 self._observation_buffer.pop(0)
             if self._on_narration:
                 asyncio.create_task(self._on_narration(display))
 
-        # Live API tags kept as fallback scoring path
-        for m in SCORE_RE.finditer(text):
-            action, pts, desc = m.group(1), int(m.group(2)), m.group(3)
-            log.info(f"SCORE (live-api): {action} +{pts} -- {desc}")
-            self._last_score_time = time.monotonic()
-            if self._on_score:
-                asyncio.create_task(self._on_score(action, pts, desc))
+        # Parse gesture tags
+        for m in GESTURE_RE.finditer(text):
+            gesture = m.group(1)
+            log.info(f"GESTURE: {gesture}")
+            if self._on_gesture:
+                asyncio.create_task(self._on_gesture(gesture))
 
-        for m in PENALIZE_RE.finditer(text):
-            action, pts = m.group(1), int(m.group(2))
-            log.info(f"PENALIZE (live-api): {action} -{pts}")
-            if self._on_penalize:
-                asyncio.create_task(self._on_penalize(action, pts))
+        # Parse action tags
+        for m in ACTION_RE.finditer(text):
+            action_type = m.group(1)
+            params_str = m.group(2)
+            log.info(f"ACTION: {action_type} {params_str}")
+            try:
+                import json
+                params = json.loads(params_str)
+            except Exception:
+                params = {}
+            if self._on_action:
+                asyncio.create_task(self._on_action(action_type, params))
 
-        for m in MUSIC_RE.finditer(text):
-            mood = m.group(1)
-            log.info(f"MUSIC (live-api): {mood}")
-            if self._on_music:
-                asyncio.create_task(self._on_music(mood))
-
-        for m in TASK_RE.finditer(text):
-            task_desc, bonus = m.group(1), int(m.group(2))
-            log.info(f"TASK (live-api): {task_desc} +{bonus} bonus")
-            if self._on_task:
-                asyncio.create_task(self._on_task(task_desc, bonus))
-
-    def _build_nudge_context(self) -> str:
-        """Build context string with brain summary + game state."""
-        parts = []
-
-        # Use brain context if available (richer than raw observation buffer)
-        if self._brain:
-            brain_ctx = self._brain.get_context_summary()
-            if brain_ctx:
-                parts.append(f"Game memory: {brain_ctx}")
-
-        # Fallback to raw observation buffer
-        if not parts:
-            recent = self._observation_buffer[-3:]
-            if recent:
-                parts.append(
-                    "Recent observations: "
-                    + " | ".join(recent)
-                )
-
-        # Game state
-        if self._game_state_fn:
-            state = self._game_state_fn()
-            parts.append(
-                f"Game state: vibes={state.get('vibes', 0)}, "
-                f"streak={state.get('streak', 0)}, "
-                f"multiplier={state.get('multiplier', 1)}x, "
-                f"time_left={state.get('timer', '?')}s, "
-                f"rank={state.get('rank', '?')}"
-            )
-
-        return "\n".join(parts)
-
-    def _compute_nudge_interval(self) -> float:
-        """Compute adaptive nudge interval based on game state."""
-        now = time.monotonic()
-        idle_duration = now - self._last_score_time if self._last_score_time else 0
-
-        # Check game state for timer
-        if self._game_state_fn:
-            state = self._game_state_fn()
-            timer = state.get("timer", 999)
-            if timer <= 60:
-                return NUDGE_FINAL_MINUTE_INTERVAL
-
-        # Adaptive: shorter interval when idle, longer when active
-        if idle_duration > 15:
-            return NUDGE_IDLE_INTERVAL
-        elif self._player_interacted:
-            return NUDGE_ACTIVE_INTERVAL
-        else:
-            return NUDGE_IDLE_INTERVAL
-
-    async def _nudger(self):
-        await asyncio.sleep(12)
+    async def _watcher(self):
+        """Periodically prompt Gemini to check for gestures and context."""
+        await asyncio.sleep(8)
         idx = 0
         try:
             while self._running:
-                # Skip nudging while Gemini is speaking (defensive guard)
                 if self._gemini_speaking:
                     await asyncio.sleep(1)
                     continue
 
-                # If nudger is paused (player was speaking), poll until resume delay elapses
-                if self._nudger_paused:
+                if self._watcher_paused:
                     elapsed = time.monotonic() - self._player_stopped_speaking_at
-                    if self._player_stopped_speaking_at > 0 and elapsed >= NUDGE_RESUME_DELAY:
-                        self._nudger_paused = False
-                        log.info("Nudger resumed after player speech")
+                    if self._player_stopped_speaking_at > 0 and elapsed >= WATCHER_RESUME_DELAY:
+                        self._watcher_paused = False
                     else:
                         await asyncio.sleep(1)
                         continue
 
-                # Build nudge: static prompt enriched with brain context (no API call)
-                prompts = TAGS_ONLY_PROMPTS if self._player_interacted else NARRATE_PROMPTS
-                prompt = prompts[idx % len(prompts)]
-                context = self._build_nudge_context()
-                full_prompt = f"{context}\n\n{prompt}" if context else prompt
+                prompt = WATCHER_PROMPTS[idx % len(WATCHER_PROMPTS)]
 
-                log.info("Nudge (trigger=nudge): %s", full_prompt[:120])
+                # Add recent context
+                recent = self._observation_buffer[-3:]
+                if recent:
+                    context = "Recent context: " + " | ".join(recent)
+                    prompt = f"{context}\n\n{prompt}"
+
+                log.info("Watcher check: %s", prompt[:100])
                 try:
                     await self._session.send_client_content(
                         turns=types.Content(
                             role="user",
-                            parts=[types.Part(text=full_prompt)],
+                            parts=[types.Part(text=prompt)],
                         ),
                         turn_complete=True,
                     )
                 except Exception as e:
-                    log.error(f"Nudge error: {e}")
+                    log.error(f"Watcher error: {e}")
                 idx += 1
-                interval = self._compute_nudge_interval()
+
+                interval = WATCHER_ACTIVE_INTERVAL if self._user_interacted else WATCHER_IDLE_INTERVAL
                 await asyncio.sleep(interval)
         except asyncio.CancelledError:
             pass
