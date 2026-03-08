@@ -60,6 +60,8 @@ class Orchestrator:
         self._agents = {
             "note": self._note_agent,
             "meeting_minutes": self._meeting_agent,
+            "meeting_minutes_start": self._meeting_agent,
+            "meeting_minutes_stop": self._meeting_agent,
             "draft_email": self._email_agent,
             "send_email": self._email_agent,
             "read_email": self._email_agent,
@@ -190,6 +192,14 @@ class Orchestrator:
         await self._execute_action(action_type, params)
 
     async def _execute_action(self, action_type: str, params: dict):
+        # Normalize meeting_minutes_start/stop → meeting_minutes with command param
+        if action_type == "meeting_minutes_start":
+            action_type = "meeting_minutes"
+            params = {"command": "start"}
+        elif action_type == "meeting_minutes_stop":
+            action_type = "meeting_minutes"
+            params = {"command": "stop"}
+
         log.info(">>> EXECUTE: %s params=%s", action_type, params)
         agent = self._agents.get(action_type)
         if not agent:

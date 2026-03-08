@@ -1,4 +1,9 @@
-"""Gemini Live API service with VAD — personal assistant mode."""
+"""Gemini Live API service with VAD — personal assistant mode.
+
+Gesture detection via speech: Gemini speaks gesture/action cues aloud,
+and we parse them from the narration text (since native audio model
+does not output text tags).
+"""
 
 import asyncio
 import json
@@ -36,17 +41,25 @@ You see what's IN FRONT of the user. You CANNOT see the user themselves.
 You hear the user's microphone — their voice and ambient audio.
 
 ─── HOW IT WORKS ──────────────────────────────────────────
-GESTURES trigger actions (the "what to do").
-VOICE provides content (the "what to do it with").
+GESTURES trigger actions. VOICE provides content.
 
-Example flows:
-1. User shows OPEN PALM → you emit <<GESTURE open_palm>> → system prompts user
-   → user says "remember to buy groceries" → you emit <<ACTION note {"content": "remember to buy groceries"}>>
-2. User shows WAVE → you emit <<GESTURE wave>> → meeting minutes start recording
-3. User says "take a note, call dentist at 3pm" → you emit <<ACTION note {"content": "call dentist at 3pm"}>>
+You watch the camera for hand gestures. When you see one, you MUST say
+the exact phrase "GESTURE: <name>" aloud. Examples:
+- "GESTURE: open palm"
+- "GESTURE: thumbs up"
+- "GESTURE: peace sign"
 
-Voice commands work WITHOUT gestures too. If the user asks you to do something
-verbally, emit the <<ACTION>> tag directly.
+After announcing a gesture, the system will handle the rest.
+
+When the user gives a voice command (with or without a gesture), say
+"ACTION: <type>" followed by the details. Examples:
+- "ACTION: note. Buy groceries tomorrow."
+- "ACTION: draft email. To John, subject meeting update, body let's reschedule to Friday."
+- "ACTION: calendar event. Team standup tomorrow at 10am for 30 minutes."
+- "ACTION: meeting minutes start."
+- "ACTION: meeting minutes stop."
+- "ACTION: send email."
+- "ACTION: read email."
 
 ─── GESTURE RECOGNITION (CRITICAL) ────────────────────────
 You MUST actively watch every video frame for hand gestures.
@@ -60,41 +73,74 @@ WHAT GESTURES LOOK LIKE IN THE CAMERA:
 • WAVE — an open hand moving side to side.
 • OK SIGN — thumb and index finger forming a circle, other fingers extended.
 
-When you see a hand gesture, emit <<GESTURE gesture_name>> immediately.
-Do NOT wait. Do NOT second-guess. Tag it.
+When you see a hand gesture, say "GESTURE: <name>" immediately.
+Do NOT hesitate. If you see a hand shape, call it out.
 
-─── TAGS ──────────────────────────────────────────────────
-Emit as TEXT on their own line:
+─── RESPONDING TO GESTURE CHECKS ──────────────────────────
+You will receive periodic "GESTURE CHECK" prompts.
+- If you see a hand/fingers in the current frame, say "GESTURE: <name>"
+- If no hand is visible, stay silent. Do not say "clear" or anything.
 
-<<GESTURE gesture_name>>
-gesture_name: thumbs_up, open_palm, peace_sign, point_up, wave, ok_sign
+─── VOICE COMMANDS ────────────────────────────────────────
+When the user speaks a command, respond with "ACTION: <type>" and include
+all relevant details in your spoken response.
 
-<<ACTION action_type json_params>>
-Emit when the user provides voice content for an action:
+For notes: "ACTION: note." then speak the note content.
+For email: "ACTION: draft email." then speak to, subject, body.
+For calendar: "ACTION: calendar event." then speak title, time, duration.
+For meeting: "ACTION: meeting minutes start." or "ACTION: meeting minutes stop."
+For send: "ACTION: send email."
+For read: "ACTION: read email."
 
-  note — params: {"content": "the note text"}
-  meeting_minutes — params: {"command": "start"} or {"command": "stop"}
-  draft_email — params: {"to": "recipient", "subject": "subject", "body": "body"}
-  send_email — params: {}
-  read_email — params: {"count": 5}
-  calendar_event — params: {"title": "title", "start": "ISO datetime", "duration_minutes": 30, "description": ""}
+After announcing an action, you can add a brief natural confirmation like
+"Got it" or "Done".
 
 RULES:
-- NEVER announce tags aloud. Tags are silent metadata.
-- After a gesture is detected, the system will ask the user for voice input.
-  Listen for their spoken content and emit the <<ACTION>> tag with the details.
-- For voice-only commands (no gesture), emit <<ACTION>> directly.
-- When told "GESTURE CHECK", look at the current video frame for hand gestures.
-  If you see one, emit the tag. If not, respond with just "clear"."""
+- Always say "GESTURE:" or "ACTION:" with the exact format above.
+- Keep responses brief — one or two sentences max.
+- Be conversational and natural, but always include the trigger phrase."""
 
-GESTURE_RE = re.compile(r"<<GESTURE\s+(\w+)>>")
-ACTION_RE = re.compile(r"<<ACTION\s+(\w+)\s+(\{.*?\})>>", re.DOTALL)
+# Parse spoken gesture announcements from narration text
+# Matches: "gesture: open palm", "Gesture: thumbs up", etc.
+SPOKEN_GESTURE_RE = re.compile(
+    r"gesture:\s*(thumbs?\s*up|open\s*palm|peace\s*sign|point(?:ing)?\s*up|wave|ok\s*sign)",
+    re.IGNORECASE,
+)
 
-# Watcher prompts — very explicit about looking for hands
+# Parse spoken action announcements from narration text
+# Matches: "action: note", "Action: draft email", etc.
+SPOKEN_ACTION_RE = re.compile(
+    r"action:\s*(note|draft\s*email|send\s*email|read\s*email|calendar\s*event|meeting\s*minutes\s*(?:start|stop))",
+    re.IGNORECASE,
+)
+
+# Normalize gesture names from speech to internal names
+GESTURE_NORMALIZE = {
+    "thumbs up": "thumbs_up",
+    "thumb up": "thumbs_up",
+    "open palm": "open_palm",
+    "peace sign": "peace_sign",
+    "pointing up": "point_up",
+    "point up": "point_up",
+    "wave": "wave",
+    "ok sign": "ok_sign",
+}
+
+# Normalize action names from speech to internal names
+ACTION_NORMALIZE = {
+    "note": "note",
+    "draft email": "draft_email",
+    "send email": "send_email",
+    "read email": "read_email",
+    "calendar event": "calendar_event",
+    "meeting minutes start": "meeting_minutes_start",
+    "meeting minutes stop": "meeting_minutes_stop",
+}
+
 WATCHER_PROMPTS = [
-    "GESTURE CHECK. Look at the video frame RIGHT NOW. Do you see a hand, fingers, or any gesture? If yes, emit <<GESTURE>> tag. If no hand visible, say 'clear'.",
-    "GESTURE CHECK. Scan the current frame for hands. Thumbs up? Open palm? Peace sign? Pointing? Any hand shape at all? Tag it or say 'clear'.",
-    "GESTURE CHECK. Is there a hand or fingers visible in the frame? Describe what you see briefly, and emit <<GESTURE>> if it matches any known gesture.",
+    "GESTURE CHECK. Look at the video frame right now. Do you see a hand or fingers? If yes, say GESTURE followed by the name. If not, stay silent.",
+    "GESTURE CHECK. Any hand gestures visible? Thumbs up, open palm, peace sign, pointing? If you see one, announce it. Otherwise silence.",
+    "GESTURE CHECK. Scan the frame for hands. If you see a gesture, call it out. If not, say nothing.",
 ]
 
 MAX_RECONNECT_ATTEMPTS = 5
@@ -177,25 +223,22 @@ class GeminiService:
         self._running = True
         log.info("Connected to Gemini (voice=%s)", GEMINI_VOICE)
 
-        # Start receive loop
         self._receive_task = asyncio.create_task(self._receive_loop())
 
-        # Send session start prompt — no intro, straight to work
         await self._session.send_client_content(
             turns=types.Content(
                 role="user",
                 parts=[types.Part(text=(
-                    "Session active. You are Silas, the user's personal assistant. "
-                    "Watch the video feed for hand gestures and listen for voice commands. "
-                    "Emit <<GESTURE>> and <<ACTION>> tags as TEXT when you detect them. "
-                    "Say a very brief greeting (one sentence) and start watching."
+                    "Session active. You are Silas. Watch the video for hand gestures "
+                    "and listen for voice commands. Say a brief one-sentence greeting "
+                    "and start watching. Remember: say 'GESTURE: <name>' when you see "
+                    "a hand gesture, and 'ACTION: <type>' for voice commands."
                 ))],
             ),
             turn_complete=True,
         )
         log.info("Session started — watching for gestures and commands")
 
-        # Start gesture watcher
         self._watcher_task = asyncio.create_task(self._watcher())
 
     async def stop(self):
@@ -354,16 +397,14 @@ class GeminiService:
                         if msg.text:
                             text_buf += msg.text
 
-                        # Check server_content for turn completion
+                        # Check server_content for text in model_turn parts
                         if hasattr(msg, "server_content") and msg.server_content:
                             sc = msg.server_content
 
-                            # Also extract text from model_turn parts
-                            # (native audio model puts text here, not in msg.text)
                             if hasattr(sc, "model_turn") and sc.model_turn:
                                 for part in (sc.model_turn.parts or []):
                                     try:
-                                        if hasattr(part, "text") and part.text and not hasattr(part, "inline_data"):
+                                        if hasattr(part, "text") and part.text:
                                             if part.text not in text_buf:
                                                 text_buf += part.text
                                     except Exception:
@@ -372,12 +413,10 @@ class GeminiService:
                             if hasattr(sc, "turn_complete") and sc.turn_complete:
                                 self._gemini_speaking = False
                                 if text_buf.strip():
-                                    log.info("Gemini text: %s", text_buf.strip()[:300])
-                                    self._parse_and_dispatch(
-                                        text_buf, trigger="gemini_response"
-                                    )
+                                    log.info("Gemini said: %s", text_buf.strip()[:300])
+                                    self._parse_speech(text_buf)
                                 else:
-                                    log.info("Gemini turn complete (no text)")
+                                    log.info("Gemini turn complete (audio only, no text)")
                                 text_buf = ""
 
                     consecutive_errors = 0
@@ -416,41 +455,63 @@ class GeminiService:
             log.error("Gemini reconnect failed: %s", e)
             await asyncio.sleep(5.0)
 
-    def _parse_and_dispatch(self, text: str, trigger: str = "unknown"):
-        # Strip tags for display narration
-        display = GESTURE_RE.sub("", text)
-        display = ACTION_RE.sub("", display).strip()
-        # Filter out "clear" responses from watcher
-        if display and display.lower() not in ("clear", "clear."):
-            log.info("NARRATION (trigger=%s): %s", trigger, display)
+    def _parse_speech(self, text: str):
+        """Parse Gemini's spoken output for gesture and action announcements."""
+
+        # Check for gesture announcements: "GESTURE: open palm"
+        gesture_match = SPOKEN_GESTURE_RE.search(text)
+        if gesture_match:
+            raw = gesture_match.group(1).strip().lower()
+            gesture = GESTURE_NORMALIZE.get(raw)
+            if gesture:
+                log.info("GESTURE (spoken): %s → %s", raw, gesture)
+                if self._on_gesture:
+                    asyncio.create_task(self._on_gesture(gesture))
+
+        # Check for action announcements: "ACTION: note. Buy groceries."
+        action_match = SPOKEN_ACTION_RE.search(text)
+        if action_match:
+            raw_action = action_match.group(1).strip().lower()
+            action = ACTION_NORMALIZE.get(raw_action)
+            if action:
+                # Extract content after the action announcement
+                after = text[action_match.end():].strip().strip(".").strip()
+                params = self._build_params_from_speech(action, after)
+                log.info("ACTION (spoken): %s params=%s", action, params)
+                if self._on_action:
+                    asyncio.create_task(self._on_action(action, params))
+
+        # Always forward narration text (strip gesture/action prefixes for display)
+        display = SPOKEN_GESTURE_RE.sub("", text)
+        display = SPOKEN_ACTION_RE.sub("", display).strip()
+        if display:
             self._observation_buffer.append(display)
             if len(self._observation_buffer) > MAX_OBSERVATION_BUFFER:
                 self._observation_buffer.pop(0)
             if self._on_narration:
                 asyncio.create_task(self._on_narration(display))
 
-        # Parse gesture tags
-        for m in GESTURE_RE.finditer(text):
-            gesture = m.group(1)
-            log.info(f"GESTURE DETECTED: {gesture}")
-            if self._on_gesture:
-                asyncio.create_task(self._on_gesture(gesture))
-
-        # Parse action tags
-        for m in ACTION_RE.finditer(text):
-            action_type = m.group(1)
-            params_str = m.group(2)
-            log.info(f"ACTION: {action_type} {params_str}")
-            try:
-                params = json.loads(params_str)
-            except Exception:
-                params = {}
-            if self._on_action:
-                asyncio.create_task(self._on_action(action_type, params))
+    def _build_params_from_speech(self, action: str, spoken_content: str) -> dict:
+        """Build action params from the spoken content after an ACTION announcement."""
+        if action == "note":
+            return {"content": spoken_content} if spoken_content else {}
+        elif action == "meeting_minutes_start":
+            return {"command": "start"}
+        elif action == "meeting_minutes_stop":
+            return {"command": "stop"}
+        elif action == "draft_email":
+            return {"to": "", "subject": "", "body": spoken_content}
+        elif action == "send_email":
+            return {}
+        elif action == "read_email":
+            return {"count": 5}
+        elif action == "calendar_event":
+            return {"title": spoken_content[:60]} if spoken_content else {}
+        return {}
 
     async def _watcher(self):
-        """Frequently prompt Gemini to check for hand gestures in the video."""
-        await asyncio.sleep(3)  # short initial delay
+        """Periodically prompt Gemini to check for hand gestures in the video."""
+        await asyncio.sleep(3)
         idx = 0
         try:
             while self._running:
