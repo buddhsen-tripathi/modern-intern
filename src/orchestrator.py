@@ -192,7 +192,6 @@ class Orchestrator:
     async def _execute_action(self, action_type: str, params: dict):
         agent = self._agents.get(action_type)
         if not agent:
-            # Handle confirm separately
             if action_type == "confirm":
                 log.info("Confirm acknowledged")
                 await self.display.send_event({
@@ -201,6 +200,7 @@ class Orchestrator:
                     "status": "success",
                     "message": "Confirmed.",
                 })
+                await self.gemini.send_prompt("Got it.")
                 return
             log.warning("No agent for action: %s", action_type)
             return
@@ -222,14 +222,19 @@ class Orchestrator:
 
         log.info("Executing agent: %s (%s)", agent.name, action_type)
         result = await agent.execute(params, context)
-        log.info("Agent result: %s", result.get("message", ""))
+        msg = result.get("message", "Done.")
+        log.info("Agent result: %s", msg)
 
+        # Send result to display
         await self.display.send_event({
             "type": "action_result",
             "action": action_type,
             "agent": agent.name,
             **result,
         })
+
+        # Have Silas speak the result aloud
+        await self.gemini.send_prompt(msg)
 
     async def _on_vad_state(self, state: str):
         await self.display.send_vad_state(state)

@@ -149,7 +149,7 @@ class GeminiService:
 
     def _build_live_config(self) -> types.LiveConnectConfig:
         return types.LiveConnectConfig(
-            response_modalities=["AUDIO", "TEXT"],
+            response_modalities=["AUDIO"],
             system_instruction=types.Content(
                 parts=[types.Part(text=SYSTEM_PROMPT)]
             ),
@@ -212,14 +212,17 @@ class GeminiService:
             self._session = None
 
     async def send_prompt(self, text: str):
-        """Send a text prompt to Gemini (e.g., to ask the user for voice input)."""
+        """Tell Gemini to speak something to the user."""
         if not self._session or not self._running:
             return
         try:
             await self._session.send_client_content(
                 turns=types.Content(
                     role="user",
-                    parts=[types.Part(text=f"Say this to the user: \"{text}\"")],
+                    parts=[types.Part(text=(
+                        f"Tell the user this in one brief sentence (paraphrase naturally, "
+                        f"don't read it robotically): {text}"
+                    ))],
                 ),
                 turn_complete=True,
             )
