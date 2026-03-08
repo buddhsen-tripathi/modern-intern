@@ -63,7 +63,7 @@ let gestureBadgeTimer = null;
 // -- Camera --
 async function startCamera() {
   const stream = await navigator.mediaDevices.getUserMedia({
-    video: { facingMode: "environment", width: { ideal: 768 }, height: { ideal: 768 } },
+    video: { facingMode: "environment", width: { ideal: 640 }, height: { ideal: 640 } },
     audio: false,
   });
   video.srcObject = stream;
@@ -76,9 +76,9 @@ function captureLoop() {
   const vw = video.videoWidth;
   const vh = video.videoHeight;
   const size = Math.min(vw, vh);
-  canvas.width = 768;
-  canvas.height = 768;
-  ctx.drawImage(video, (vw - size) / 2, (vh - size) / 2, size, size, 0, 0, 768, 768);
+  canvas.width = 400;
+  canvas.height = 400;
+  ctx.drawImage(video, (vw - size) / 2, (vh - size) / 2, size, size, 0, 0, 400, 400);
 
   canvas.toBlob(
     (blob) => {
@@ -90,7 +90,7 @@ function captureLoop() {
           ws.send(tagged.buffer);
         });
       }
-      setTimeout(captureLoop, 1000);
+      setTimeout(captureLoop, 333); // ~3fps for gesture detection
     },
     "image/jpeg",
     0.7,
