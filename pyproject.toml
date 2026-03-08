@@ -9,6 +9,8 @@ dependencies = [
     "aiohttp",
     "python-dotenv",
     "webrtcvad-wheels>=2.0.14",
+    "aiosmtplib>=5.1.0",
+    "aioimaplib>=2.0.1",
 ]
 
 [project.optional-dependencies]
