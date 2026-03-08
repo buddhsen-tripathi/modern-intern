@@ -350,20 +350,24 @@ class GeminiService:
                             if self._on_audio:
                                 asyncio.create_task(self._on_audio(msg.data))
 
-                        # Text (narration + tags)
+                        # Text — collect from msg.text
                         if msg.text:
                             text_buf += msg.text
 
-                        # Also check server_content for text parts (thoughts, etc)
+                        # Check server_content for turn completion
                         if hasattr(msg, "server_content") and msg.server_content:
                             sc = msg.server_content
-                            # Extract text from model_turn parts
+
+                            # Also extract text from model_turn parts
+                            # (native audio model puts text here, not in msg.text)
                             if hasattr(sc, "model_turn") and sc.model_turn:
-                                for part in sc.model_turn.parts or []:
-                                    if hasattr(part, "text") and part.text:
-                                        text_buf += part.text
-                                    if hasattr(part, "thought") and part.thought:
-                                        log.debug("Gemini thought: %s", str(part)[:100])
+                                for part in (sc.model_turn.parts or []):
+                                    try:
+                                        if hasattr(part, "text") and part.text and not hasattr(part, "inline_data"):
+                                            if part.text not in text_buf:
+                                                text_buf += part.text
+                                    except Exception:
+                                        pass
 
                             if hasattr(sc, "turn_complete") and sc.turn_complete:
                                 self._gemini_speaking = False
@@ -372,6 +376,8 @@ class GeminiService:
                                     self._parse_and_dispatch(
                                         text_buf, trigger="gemini_response"
                                     )
+                                else:
+                                    log.info("Gemini turn complete (no text)")
                                 text_buf = ""
 
                     consecutive_errors = 0

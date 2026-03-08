@@ -90,7 +90,7 @@ function captureLoop() {
           ws.send(tagged.buffer);
         });
       }
-      setTimeout(captureLoop, 333); // ~3fps for gesture detection
+      setTimeout(captureLoop, 1000); // 1fps — Gemini Live API rate limit
     },
     "image/jpeg",
     0.7,
