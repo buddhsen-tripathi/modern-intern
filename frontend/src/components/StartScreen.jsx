@@ -28,7 +28,7 @@ export default function StartScreen({ phase, onStart }) {
               <path d="M12 16v-4M12 8h.01" />
             </svg>
           </div>
-          <div className="start-title">SILAS</div>
+          <div className="start-title">MODERN INTERN</div>
           <div className="start-subtitle">VOICE ASSISTANT</div>
         </div>
 

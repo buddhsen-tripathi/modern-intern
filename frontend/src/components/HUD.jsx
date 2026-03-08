@@ -45,7 +45,7 @@ function LogEntry({ entry }) {
 
 export default function HUD({ events, narration, vadState, voiceStatus, isPaused, onTogglePause }) {
   const [logs, setLogs] = useState(() => [
-    { id: 0, ts: formatTimestamp(new Date()), tag: 'SYS', text: 'SILAS v2.0 — voice-only mode', level: 'system' },
+    { id: 0, ts: formatTimestamp(new Date()), tag: 'SYS', text: 'MODERN INTERN v2.0 — voice-only mode', level: 'system' },
     { id: 1, ts: formatTimestamp(new Date()), tag: 'SYS', text: 'Awaiting session start...', level: 'muted' },
   ])
   const [statusLabel, setStatusLabel] = useState('ACTIVE')
@@ -100,7 +100,7 @@ export default function HUD({ events, narration, vadState, voiceStatus, isPaused
   // Log narration
   useEffect(() => {
     if (narration && narration.trim()) {
-      addLog('SILAS', narration, 'narration')
+      addLog('INTERN', narration, 'narration')
     }
   }, [narration, addLog])
 
@@ -155,7 +155,7 @@ export default function HUD({ events, narration, vadState, voiceStatus, isPaused
       {/* Terminal log */}
       <div className="terminal-wrap">
         <div className="terminal-header">
-          <span className="terminal-title">SILAS // SYSTEM LOG</span>
+          <span className="terminal-title">MODERN INTERN // SYSTEM LOG</span>
           <span className="terminal-count">{logs.length} entries</span>
         </div>
         <div className="terminal-body">
@@ -171,7 +171,7 @@ export default function HUD({ events, narration, vadState, voiceStatus, isPaused
         <div className="narration-bar">
           <div className="narration-indicator">
             <div className={`mic-indicator${micListening ? ' listening' : ''}`} />
-            <span className="narration-label">SILAS</span>
+            <span className="narration-label">INTERN</span>
           </div>
           <div className="narration-text">{narration}</div>
           <div className={`voice-status${voiceStatus ? ` ${voiceStatus}` : ''}`}>
