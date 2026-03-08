@@ -9,6 +9,7 @@ import os
 from src.agents.calendar_agent import CalendarAgent
 from src.agents.email_agent import EmailAgent
 from src.agents.meeting_agent import MeetingAgent
+from src.agents.document_agent import DocumentAgent
 from src.agents.note_agent import NoteAgent
 from src.agents.search_agent import SearchAgent
 from src.display.web_display import WebDisplayService
@@ -35,6 +36,7 @@ class Orchestrator:
         self._email_agent = EmailAgent()
         self._calendar_agent = CalendarAgent()
         self._search_agent = SearchAgent(api_key)
+        self._document_agent = DocumentAgent(api_key)
 
         # Agent routing table
         self._agents = {
@@ -49,6 +51,7 @@ class Orchestrator:
             "read_email": self._email_agent,
             "calendar_event": self._calendar_agent,
             "search": self._search_agent,
+            "create_document": self._document_agent,
         }
 
         # Note recording state
@@ -105,6 +108,10 @@ class Orchestrator:
         # Buffer narration while note is recording
         if self._note_recording and text.strip():
             self._note_buffer.append(text.strip())
+        # Track observations for agent context
+        self._observations.append(text)
+        if len(self._observations) > self._max_observations:
+            self._observations.pop(0)
 
     async def _on_user_speech(self, text: str):
         """Called when user's speech is transcribed."""
@@ -132,10 +139,6 @@ class Orchestrator:
             "action:",
         )
         return any(p in lower for p in meta_phrases)
-        # Track observations for agent context
-        self._observations.append(text)
-        if len(self._observations) > self._max_observations:
-            self._observations.pop(0)
 
     async def _on_action(self, action_type: str, params: dict):
         """Called when Gemini announces an action via speech."""

@@ -60,7 +60,15 @@ MEETINGS:
 SEARCH:
 • "ACTION: search. query: what is quantum computing."
 If user says "search for latest news on AI" → "ACTION: search. query: latest news on AI."
-If user says "look up the capital of France" → "ACTION: search. query: capital of France."
+
+DOCUMENTS (always include type, topic; size defaults to 5):
+• "ACTION: create document. type: presentation, topic: quarterly sales report, size: 5."
+• "ACTION: create document. type: document, topic: project proposal, size: 4."
+• "ACTION: create document. type: presentation, topic: AI trends, size: 8, to: john@example.com."
+If user says "make a ppt about climate change" → "ACTION: create document. type: presentation, topic: climate change, size: 5."
+If user says "create a 10 slide deck about marketing" → "ACTION: create document. type: presentation, topic: marketing, size: 10."
+If user says "create a doc about strategy" → "ACTION: create document. type: document, topic: strategy, size: 5."
+The "to" and "size" fields are optional — size defaults to 5, email goes to user's own address.
 
 RULES:
 - For draft email: ALWAYS include "to:", "subject:", and "body:" fields.
@@ -75,7 +83,7 @@ Only use ACTION: when the user gives an actual command."""
 
 # Parse spoken action announcements from narration text
 SPOKEN_ACTION_RE = re.compile(
-    r"action:\s*(note\s*(?:start|stop)|note|draft\s*email|send\s*email|read\s*email|calendar\s*event|meeting\s*minutes\s*(?:start|stop)|search)",
+    r"action:\s*(note\s*(?:start|stop)|note|draft\s*email|send\s*email|read\s*email|calendar\s*event|meeting\s*minutes\s*(?:start|stop)|search|create\s*document)",
     re.IGNORECASE,
 )
 
@@ -93,6 +101,8 @@ ACTION_NORMALIZE = {
     "meeting minutes start": "meeting_minutes_start",
     "meeting minutes stop": "meeting_minutes_stop",
     "search": "search",
+    "create document": "create_document",
+    "createdocument": "create_document",
 }
 
 MAX_RECONNECT_ATTEMPTS = 5
@@ -477,6 +487,8 @@ class GeminiService:
             return self._parse_calendar_fields(spoken_content)
         elif action == "search":
             return self._parse_search_fields(spoken_content)
+        elif action == "create_document":
+            return self._parse_document_fields(spoken_content)
         return {}
 
     def _parse_email_fields(self, text: str) -> dict:
@@ -540,3 +552,33 @@ class GeminiService:
         if query_match:
             return {"query": query_match.group(1).strip().rstrip(".")}
         return {"query": text.strip().rstrip(".")}
+
+    def _parse_document_fields(self, text: str) -> dict:
+        """Parse 'type: X, topic: Y, size: N, to: Z' from spoken content."""
+        result = {"type": "presentation", "topic": "", "size": 5, "to": ""}
+        if not text:
+            return result
+
+        type_match = re.search(r"type:\s*([^,]+)", text, re.IGNORECASE)
+        topic_match = re.search(r"topic:\s*([^,]+?)(?:,\s*(?:size|to):|\.?$)", text, re.IGNORECASE)
+        size_match = re.search(r"size:\s*(\d+)", text, re.IGNORECASE)
+        to_match = re.search(r"to:\s*([^,]+)", text, re.IGNORECASE)
+
+        if type_match:
+            t = type_match.group(1).strip().lower().rstrip(".")
+            if "pres" in t or "ppt" in t or "slide" in t:
+                result["type"] = "presentation"
+            elif "doc" in t:
+                result["type"] = "document"
+        if topic_match:
+            result["topic"] = topic_match.group(1).strip().rstrip(".")
+        if size_match:
+            result["size"] = max(2, min(int(size_match.group(1)), 20))
+        if to_match:
+            result["to"] = to_match.group(1).strip().rstrip(".")
+
+        # Fallback
+        if not result["topic"]:
+            result["topic"] = text.strip().rstrip(".")
+
+        return result

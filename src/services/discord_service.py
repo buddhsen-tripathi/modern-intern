@@ -152,4 +152,5 @@ ACTION_FORMATTERS = {
     "read_email": _format_email,
     "calendar_event": _format_calendar,
     "search": _format_search,
+    "create_document": _format_generic,
 }

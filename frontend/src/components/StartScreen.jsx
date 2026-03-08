@@ -7,6 +7,7 @@ const VOICE_COMMANDS = [
   { cmd: '"start meeting"', desc: 'Begin recording meeting' },
   { cmd: '"stop meeting"', desc: 'End and save meeting notes' },
   { cmd: '"search <term>"', desc: 'Search and get a summary' },
+  { cmd: '"create a ppt/doc"', desc: 'Generate and email a file' },
 ]
 
 export default function StartScreen({ phase, onStart }) {
