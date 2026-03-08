@@ -1,0 +1,14 @@
+{
+  "name": "silas-discord-bot",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@chat-adapter/discord": "latest",
+    "@chat-adapter/state-memory": "latest",
+    "chat": "latest",
+    "dotenv": "^17.3.1"
+  }
+}

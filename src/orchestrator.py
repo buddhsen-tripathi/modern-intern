@@ -12,6 +12,7 @@ from src.agents.meeting_agent import MeetingAgent
 from src.agents.note_agent import NoteAgent
 from src.display.web_display import WebDisplayService
 from src.services.gemini_service import GeminiService
+from src.services.discord_service import DiscordService
 
 log = logging.getLogger(__name__)
 
@@ -24,6 +25,7 @@ class Orchestrator:
 
         self.display = WebDisplayService()
         self.gemini = GeminiService(api_key)
+        self.discord = DiscordService()
         self._started = False
 
         # Agents
@@ -76,6 +78,7 @@ class Orchestrator:
         self._started = False
         log.info("Stopping session...")
         await self.gemini.stop()
+        await self.discord.close()
 
     async def handle_mic_audio(self, pcm_data: bytes):
         await self.gemini.send_mic_audio(pcm_data)
@@ -110,13 +113,17 @@ class Orchestrator:
             self._note_recording = True
             self._note_buffer.clear()
             log.info(">>> NOTE RECORDING STARTED")
+            note_start_result = {
+                "status": "success",
+                "message": "Recording note... say 'note end' when done.",
+            }
             await self.display.send_event({
                 "type": "action_result",
                 "action": "note_start",
                 "agent": "Notes",
-                "status": "success",
-                "message": "Recording note... say 'note end' when done.",
+                **note_start_result,
             })
+            await self.discord.send_action_result("note_start", note_start_result)
             await self.gemini.send_prompt("Go ahead, I'm listening.")
             return
 
@@ -140,6 +147,7 @@ class Orchestrator:
                     "agent": "Notes",
                     **result,
                 })
+                await self.discord.send_action_result("note", result)
                 await self.gemini.send_prompt(msg)
             else:
                 log.info(">>> NOTE RECORDING STOPPED, nothing captured")
@@ -195,6 +203,9 @@ class Orchestrator:
             **result,
         })
 
+        # Send to Telegram
+        await self.discord.send_action_result(action_type, result)
+
         # Have Silas speak the result aloud
         await self.gemini.send_prompt(msg)
 
@@ -214,4 +225,5 @@ class Orchestrator:
             "notes_count": len(self._note_agent.get_notes()),
             "events_count": len(self._calendar_agent.get_events()),
             "observations": len(self._observations),
+            "discord": self.discord.enabled,
         }
