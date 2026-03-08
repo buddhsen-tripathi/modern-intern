@@ -343,21 +343,32 @@ class GeminiService:
                         if not self._running:
                             break
 
+                        # Audio data
                         if msg.data:
                             if not self._gemini_speaking:
                                 self._gemini_speaking = True
                             if self._on_audio:
                                 asyncio.create_task(self._on_audio(msg.data))
 
+                        # Text (narration + tags)
                         if msg.text:
                             text_buf += msg.text
 
+                        # Also check server_content for text parts (thoughts, etc)
                         if hasattr(msg, "server_content") and msg.server_content:
                             sc = msg.server_content
+                            # Extract text from model_turn parts
+                            if hasattr(sc, "model_turn") and sc.model_turn:
+                                for part in sc.model_turn.parts or []:
+                                    if hasattr(part, "text") and part.text:
+                                        text_buf += part.text
+                                    if hasattr(part, "thought") and part.thought:
+                                        log.debug("Gemini thought: %s", str(part)[:100])
+
                             if hasattr(sc, "turn_complete") and sc.turn_complete:
                                 self._gemini_speaking = False
                                 if text_buf.strip():
-                                    log.info("Gemini text: %s", text_buf.strip()[:200])
+                                    log.info("Gemini text: %s", text_buf.strip()[:300])
                                     self._parse_and_dispatch(
                                         text_buf, trigger="gemini_response"
                                     )

@@ -69,7 +69,7 @@ class Orchestrator:
         # Pending action: gesture arms it, voice completes it
         self._pending_action: str | None = None
         self._pending_since: float = 0.0
-        self._pending_timeout = 30.0  # seconds to wait for voice input
+        self._pending_timeout = 5.0  # seconds to wait for voice input
 
         # Gesture cooldown tracking
         self._last_gesture_time: float = 0.0
@@ -190,6 +190,7 @@ class Orchestrator:
         await self._execute_action(action_type, params)
 
     async def _execute_action(self, action_type: str, params: dict):
+        log.info(">>> EXECUTE: %s params=%s", action_type, params)
         agent = self._agents.get(action_type)
         if not agent:
             if action_type == "confirm":
