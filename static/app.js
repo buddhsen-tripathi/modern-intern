@@ -24,6 +24,8 @@ const GESTURE_LABELS = {
 
 const ACTION_LABELS = {
   note: "Note saved",
+  note_start: "Recording note",
+  note_stop: "Note saved",
   meeting_minutes: "Meeting minutes",
   draft_email: "Email drafted",
   send_email: "Email sent",

@@ -59,6 +59,8 @@ class Orchestrator:
         # Agent routing table
         self._agents = {
             "note": self._note_agent,
+            "note_start": self._note_agent,
+            "note_stop": self._note_agent,
             "meeting_minutes": self._meeting_agent,
             "meeting_minutes_start": self._meeting_agent,
             "meeting_minutes_stop": self._meeting_agent,
@@ -67,6 +69,10 @@ class Orchestrator:
             "read_email": self._email_agent,
             "calendar_event": self._calendar_agent,
         }
+
+        # Note recording state
+        self._note_recording = False
+        self._note_buffer: list[str] = []
 
         # Pending action: gesture arms it, voice completes it
         self._pending_action: str | None = None
@@ -120,6 +126,9 @@ class Orchestrator:
         await self.display.send_narration_text(text)
         # Feed to meeting agent if recording
         self._meeting_agent.add_entry(text)
+        # Buffer narration while note is recording
+        if self._note_recording and text.strip():
+            self._note_buffer.append(text.strip())
         # Track observations for agent context
         self._observations.append(text)
         if len(self._observations) > self._max_observations:
@@ -192,6 +201,57 @@ class Orchestrator:
         await self._execute_action(action_type, params)
 
     async def _execute_action(self, action_type: str, params: dict):
+        # Handle note start/stop (continuous dictation)
+        if action_type == "note_start":
+            if self._note_recording:
+                log.info("Note recording already active")
+                return
+            self._note_recording = True
+            self._note_buffer.clear()
+            log.info(">>> NOTE RECORDING STARTED")
+            await self.display.send_event({
+                "type": "action_result",
+                "action": "note_start",
+                "agent": "Notes",
+                "status": "success",
+                "message": "Recording note... say 'note end' when done.",
+            })
+            await self.gemini.send_prompt("Go ahead, I'm listening.")
+            return
+
+        if action_type == "note_stop":
+            if not self._note_recording:
+                log.info("No note recording active")
+                return
+            self._note_recording = False
+            content = " ".join(self._note_buffer).strip()
+            self._note_buffer.clear()
+            if content:
+                log.info(">>> NOTE RECORDING STOPPED, saving %d chars", len(content))
+                result = await self._note_agent.execute(
+                    {"content": content},
+                    {"recent_observations": self._observations[-5:], "session_active": self._started},
+                )
+                msg = result.get("message", "Note saved.")
+                await self.display.send_event({
+                    "type": "action_result",
+                    "action": "note",
+                    "agent": "Notes",
+                    **result,
+                })
+                await self.gemini.send_prompt(msg)
+            else:
+                log.info(">>> NOTE RECORDING STOPPED, nothing captured")
+                await self.display.send_event({
+                    "type": "action_result",
+                    "action": "note",
+                    "agent": "Notes",
+                    "status": "error",
+                    "message": "No content captured.",
+                })
+                await self.gemini.send_prompt("Nothing to save.")
+            return
+
         # Normalize meeting_minutes_start/stop → meeting_minutes with command param
         if action_type == "meeting_minutes_start":
             action_type = "meeting_minutes"
@@ -270,6 +330,7 @@ class Orchestrator:
         return {
             "started": self._started,
             "pending_action": self._pending_action,
+            "note_recording": self._note_recording,
             "meeting_recording": self._meeting_agent.recording,
             "notes_count": len(self._note_agent.get_notes()),
             "events_count": len(self._calendar_agent.get_events()),

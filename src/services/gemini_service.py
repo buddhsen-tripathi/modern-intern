@@ -54,11 +54,18 @@ When you DON'T see one → say absolutely nothing.
 
 ─── VOICE COMMANDS ────────────────────────────────────────
 When user speaks a command, say "ACTION: <type>" with details:
-• "ACTION: note. Buy groceries."
+• "ACTION: note start." — user says "take note" or "start note"
+• "ACTION: note stop." — user says "note end", "stop note", or "done"
+• "ACTION: note. Buy groceries." — quick one-shot note
 • "ACTION: draft email. To John, subject update, body let's meet Friday."
 • "ACTION: calendar event. Standup tomorrow 10am."
 • "ACTION: meeting minutes start." / "ACTION: meeting minutes stop."
 • "ACTION: send email." / "ACTION: read email."
+
+IMPORTANT for notes:
+- If user says "take note", "start note", "begin note" → say "ACTION: note start."
+- If user says "note end", "stop note", "done with note", "that's it" → say "ACTION: note stop."
+- If user says "note: buy milk" (short, all at once) → say "ACTION: note. buy milk."
 
 Then a brief confirmation like "Got it" or "Done". Nothing more."""
 
@@ -70,9 +77,9 @@ SPOKEN_GESTURE_RE = re.compile(
 )
 
 # Parse spoken action announcements from narration text
-# Matches: "action: note", "Action: draft email", etc.
+# Matches: "action: note", "Action: draft email", "action: note start", etc.
 SPOKEN_ACTION_RE = re.compile(
-    r"action:\s*(note|draft\s*email|send\s*email|read\s*email|calendar\s*event|meeting\s*minutes\s*(?:start|stop))",
+    r"action:\s*(note\s*(?:start|stop)|note|draft\s*email|send\s*email|read\s*email|calendar\s*event|meeting\s*minutes\s*(?:start|stop))",
     re.IGNORECASE,
 )
 
@@ -91,6 +98,10 @@ GESTURE_NORMALIZE = {
 # Normalize action names from speech to internal names
 ACTION_NORMALIZE = {
     "note": "note",
+    "note start": "note_start",
+    "notestart": "note_start",
+    "note stop": "note_stop",
+    "notestop": "note_stop",
     "draft email": "draft_email",
     "send email": "send_email",
     "read email": "read_email",
@@ -147,6 +158,11 @@ class GeminiService:
         self._user_stopped_speaking_at = 0.0
         self._user_interacted = False
 
+        # Gesture dedup: suppress repeated same-gesture detections
+        self._last_gesture: str | None = None
+        self._last_gesture_time: float = 0.0
+        self._gesture_dedup_window = 10.0  # seconds to suppress same gesture
+
         # Observation buffer for context
         self._observation_buffer: list[str] = []
 
@@ -173,7 +189,7 @@ class GeminiService:
         return self._session is not None and self._running
 
     def _build_live_config(self) -> types.LiveConnectConfig:
-        return types.LiveConnectConfig(
+        config_kwargs = dict(
             response_modalities=["AUDIO"],
             system_instruction=types.Content(
                 parts=[types.Part(text=SYSTEM_PROMPT)]
@@ -189,6 +205,14 @@ class GeminiService:
                 sliding_window=types.SlidingWindow(),
             ),
         )
+        # Try to disable thinking/reasoning to reduce verbose output
+        try:
+            config_kwargs["thinking_config"] = types.ThinkingConfig(
+                thinking_budget=0,
+            )
+        except Exception:
+            pass  # Not all model versions support this
+        return types.LiveConnectConfig(**config_kwargs)
 
     async def start_session(self):
         """Connect to Gemini and start watching for gestures immediately."""
@@ -370,8 +394,8 @@ class GeminiService:
                             if self._on_audio:
                                 asyncio.create_task(self._on_audio(msg.data))
 
-                        # Text — collect from msg.text
-                        if msg.text:
+                        # Text — collect from msg.text (skip if it's thought/reasoning)
+                        if msg.text and not getattr(msg, "thought", False):
                             text_buf += msg.text
 
                         # Check server_content for text in model_turn parts
@@ -381,6 +405,9 @@ class GeminiService:
                             if hasattr(sc, "model_turn") and sc.model_turn:
                                 for part in (sc.model_turn.parts or []):
                                     try:
+                                        # Skip thought/reasoning parts
+                                        if hasattr(part, "thought") and part.thought:
+                                            continue
                                         if hasattr(part, "text") and part.text:
                                             if part.text not in text_buf:
                                                 text_buf += part.text
@@ -441,9 +468,20 @@ class GeminiService:
             raw = gesture_match.group(1).strip().lower()
             gesture = GESTURE_NORMALIZE.get(raw)
             if gesture:
-                log.info("GESTURE (spoken): %s → %s", raw, gesture)
-                if self._on_gesture:
-                    asyncio.create_task(self._on_gesture(gesture))
+                now = time.monotonic()
+                # Dedup: suppress if same gesture detected within window
+                if (gesture == self._last_gesture
+                        and now - self._last_gesture_time < self._gesture_dedup_window):
+                    log.info("GESTURE (spoken): %s → %s [DEDUP suppressed]", raw, gesture)
+                else:
+                    self._last_gesture = gesture
+                    self._last_gesture_time = now
+                    # Pause watcher after gesture detection to avoid re-triggers
+                    self._watcher_paused = True
+                    self._user_stopped_speaking_at = now
+                    log.info("GESTURE (spoken): %s → %s", raw, gesture)
+                    if self._on_gesture:
+                        asyncio.create_task(self._on_gesture(gesture))
 
         # Check for action announcements: "ACTION: note. Buy groceries."
         action_match = SPOKEN_ACTION_RE.search(text)
@@ -504,6 +542,10 @@ class GeminiService:
         """Build action params from the spoken content after an ACTION announcement."""
         if action == "note":
             return {"content": spoken_content} if spoken_content else {}
+        elif action == "note_start":
+            return {"command": "start"}
+        elif action == "note_stop":
+            return {"command": "stop"}
         elif action == "meeting_minutes_start":
             return {"command": "start"}
         elif action == "meeting_minutes_stop":
