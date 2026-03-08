@@ -5,6 +5,7 @@ CONTRIBUTORS
 - Esparance Tuyishime
 - Olivia Iarmak
 
+Demo Link: https://clownfish-app-7ftwi.ondigitalocean.app/
 
 A voice-only AI personal assistant powered by Google Gemini 2.5 Flash Live API. Speak commands, get things done — notes, emails, meetings, and more — all through natural voice interaction.
 
