@@ -4,7 +4,7 @@ import StartScreen from './components/StartScreen'
 import HUD from './components/HUD'
 
 export default function App() {
-  const { phase, narration, vadState, voiceStatus, events, start, togglePause } = useSilas()
+  const { phase, narration, vadState, voiceStatus, events, start, togglePause, sendText } = useSilas()
 
   const handleStart = useCallback(() => {
     start()
@@ -26,6 +26,7 @@ export default function App() {
           voiceStatus={voiceStatus}
           isPaused={phase === 'paused'}
           onTogglePause={togglePause}
+          onSendText={sendText}
         />
       )}
     </>

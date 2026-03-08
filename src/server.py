@@ -33,6 +33,10 @@ async def ws_handler(request: web.Request):
                         await orch.start_session()
                     elif cmd == "stop":
                         await orch.stop_session()
+                    elif cmd == "text_input":
+                        text = data.get("text", "").strip()
+                        if text:
+                            await orch.handle_text_input(text)
                     elif cmd == "action":
                         action = data.get("action", "")
                         params = data.get("params", {})

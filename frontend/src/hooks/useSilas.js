@@ -184,6 +184,13 @@ export default function useSilas() {
     }
   }, [phase])
 
+  // -- Send text input --
+  const sendText = useCallback((text) => {
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return
+    if (!text.trim()) return
+    wsRef.current.send(JSON.stringify({ type: 'text_input', text: text.trim() }))
+  }, [])
+
   // Cleanup on unmount
   useEffect(() => {
     return () => {
@@ -203,5 +210,6 @@ export default function useSilas() {
     events,
     start,
     togglePause,
+    sendText,
   }
 }

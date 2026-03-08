@@ -121,16 +121,34 @@ class DocumentAgent(BaseAgent):
             return {"status": "error", "message": f"Failed to create {doc_type}: {e}"}
 
     async def _generate_content(self, prompt: str) -> dict:
-        response = await self._client.aio.models.generate_content(
+        # Step 1: Research the topic with web search
+        research_response = await self._client.aio.models.generate_content(
             model=BRAIN_MODEL,
-            contents=prompt,
+            contents=f"Research this topic thoroughly and provide key facts, data, and insights:\n\n{prompt.split('Format:')[0]}",
             config=types.GenerateContentConfig(
-                temperature=0.4,
+                temperature=0.3,
                 tools=[types.Tool(google_search=types.GoogleSearch())],
             ),
         )
-        text = response.text.strip()
-        # Strip markdown code fences if present
+        research = research_response.text.strip()
+
+        # Step 2: Generate structured JSON from research (no search tool — clean output)
+        json_prompt = (
+            f"Based on this research:\n\n{research}\n\n"
+            f"Now generate the following structured output.\n\n"
+            f"{prompt}\n\n"
+            f"CRITICAL: Return ONLY valid JSON. No markdown, no code fences, no extra text."
+        )
+        json_response = await self._client.aio.models.generate_content(
+            model=BRAIN_MODEL,
+            contents=json_prompt,
+            config=types.GenerateContentConfig(
+                temperature=0.2,
+                response_mime_type="application/json",
+            ),
+        )
+        text = json_response.text.strip()
+        # Strip markdown code fences if somehow present
         text = re.sub(r"^```(?:json)?\s*", "", text)
         text = re.sub(r"\s*```$", "", text)
         return json.loads(text)

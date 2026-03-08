@@ -47,7 +47,36 @@ function LogEntry({ entry }) {
   )
 }
 
-export default function HUD({ events, narration, vadState, voiceStatus, isPaused, onTogglePause }) {
+function TextInput({ onSend }) {
+  const [text, setText] = useState('')
+  const inputRef = useRef(null)
+
+  const handleSubmit = (e) => {
+    e.preventDefault()
+    if (!text.trim()) return
+    onSend(text)
+    setText('')
+  }
+
+  return (
+    <form className="text-input-bar" onSubmit={handleSubmit}>
+      <input
+        ref={inputRef}
+        className="text-input"
+        type="text"
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        placeholder="Type a command or message..."
+        autoComplete="off"
+      />
+      <button className="text-send-btn" type="submit" disabled={!text.trim()}>
+        SEND
+      </button>
+    </form>
+  )
+}
+
+export default function HUD({ events, narration, vadState, voiceStatus, isPaused, onTogglePause, onSendText }) {
   const [logs, setLogs] = useState(() => [
     { id: 0, ts: formatTimestamp(new Date()), tag: 'SYS', text: 'MODERN INTERN v2.0 — voice-only mode', level: 'system' },
     { id: 1, ts: formatTimestamp(new Date()), tag: 'SYS', text: 'Awaiting session start...', level: 'muted' },
@@ -172,6 +201,7 @@ export default function HUD({ events, narration, vadState, voiceStatus, isPaused
 
       {/* Bottom */}
       <div className="hud-bottom">
+        <TextInput onSend={onSendText} />
         <div className="narration-bar">
           <div className="narration-indicator">
             <div className={`mic-indicator${micListening ? ' listening' : ''}`} />

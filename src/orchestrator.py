@@ -91,6 +91,17 @@ class Orchestrator:
     async def handle_mic_audio(self, pcm_data: bytes):
         await self.gemini.send_mic_audio(pcm_data)
 
+    async def handle_text_input(self, text: str):
+        """Handle typed text from the UI — fed to Gemini as user input."""
+        log.info("Text input: %s", text[:200])
+        # Feed to meeting agent if recording
+        self._meeting_agent.add_entry(text, speaker="user")
+        # Buffer for note if recording
+        if self._note_recording and text.strip():
+            self._note_buffer.append(text.strip())
+        # Send to Gemini as if user spoke it
+        await self.gemini.send_prompt(f"The user typed: {text}")
+
     # -- Internal callbacks --
 
     async def _on_narration_audio(self, audio_bytes: bytes):
