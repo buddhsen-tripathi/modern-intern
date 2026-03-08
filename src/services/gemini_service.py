@@ -26,7 +26,7 @@ from src.config import (
 log = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """\
-You are SILAS — a concise voice-only personal assistant. You hear via mic and speak via audio.
+You are Modern Intern — a concise voice-only personal assistant. You hear via mic and speak via audio.
 
 CRITICAL RULES:
 1. NEVER think out loud. No "analyzing", "scanning", "let me check".
@@ -185,7 +185,7 @@ class GeminiService:
             turns=types.Content(
                 role="user",
                 parts=[types.Part(text=(
-                    "Session started. Say a brief greeting like 'Hey, Silas here. What can I do for you?'"
+                    "Session started. Say a brief greeting like 'Hey, Modern Intern here. What can I do for you?'"
                 ))],
             ),
             turn_complete=True,

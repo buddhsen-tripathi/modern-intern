@@ -120,7 +120,7 @@ if __name__ == "__main__":
     app = create_app()
     app.on_startup.append(_start_stdin_reader)
     app.on_cleanup.append(_stop_stdin_reader)
-    print(f"\n  SILAS — voice assistant")
+    print(f"\n  MODERN INTERN — voice assistant")
     print(f"  Server: http://{HOST}:{PORT}")
     print(f"  Open on phone: http://<your-ip>:{PORT}")
     print()
