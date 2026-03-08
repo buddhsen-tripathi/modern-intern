@@ -1,15 +1,11 @@
-const GESTURES = [
-  { icon: '\u270B', label: 'Note' },
-  { icon: '\u270C\uFE0F', label: 'Email' },
-  { icon: '\u261D\uFE0F', label: 'Calendar' },
-  { icon: '\uD83D\uDC4B', label: 'Meeting' },
-  { icon: '\uD83D\uDC4C', label: 'Send' },
-  { icon: '\uD83D\uDC4D', label: 'Confirm' },
-]
-
 const VOICE_COMMANDS = [
   { cmd: '"take note"', desc: 'Start dictating a note' },
   { cmd: '"note end"', desc: 'Save the note' },
+  { cmd: '"draft email"', desc: 'Draft an email' },
+  { cmd: '"send email"', desc: 'Send drafted email' },
+  { cmd: '"calendar event"', desc: 'Create a calendar event' },
+  { cmd: '"start meeting"', desc: 'Begin recording meeting' },
+  { cmd: '"stop meeting"', desc: 'End and save meeting notes' },
 ]
 
 export default function StartScreen({ phase, onStart }) {
@@ -33,26 +29,14 @@ export default function StartScreen({ phase, onStart }) {
             </svg>
           </div>
           <div className="start-title">SILAS</div>
-          <div className="start-subtitle">PERSONAL ASSISTANT</div>
+          <div className="start-subtitle">VOICE ASSISTANT</div>
         </div>
 
         <button className="btn-primary" disabled={isStarting} onClick={onStart}>
           {isStarting ? 'STARTING...' : 'START'}
         </button>
         <div className="start-hint">
-          {isStarting ? 'grant camera + mic permissions...' : 'camera + mic required'}
-        </div>
-
-        <div className="gesture-guide">
-          <div className="gesture-guide-title">GESTURES</div>
-          <div className="gesture-list">
-            {GESTURES.map((g) => (
-              <div className="gesture-item" key={g.label}>
-                <span className="gesture-icon">{g.icon}</span>
-                <span className="gesture-label">{g.label}</span>
-              </div>
-            ))}
-          </div>
+          {isStarting ? 'grant mic permission...' : 'microphone required'}
         </div>
 
         <div className="voice-guide">

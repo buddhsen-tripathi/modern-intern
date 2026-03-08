@@ -1,28 +1,29 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-const TAG_CAMERA = 0x01
 const TAG_MIC = 0x02
 const TAG_NARRATION = 0x01
 const NARRATION_RATE = 24000
 
 export default function useSilas() {
-  const [phase, setPhase] = useState('idle') // idle | starting | active
+  const [phase, setPhase] = useState('idle') // idle | starting | active | paused
   const [narration, setNarration] = useState('Listening...')
   const [vadState, setVadState] = useState(null)
-  const [voiceStatus, setVoiceStatus] = useState(null) // null | 'active' | 'listening' | 'no-mic'
-  const [events, setEvents] = useState([]) // raw events for HUD to process
+  const [voiceStatus, setVoiceStatus] = useState(null)
+  const [events, setEvents] = useState([])
 
   const wsRef = useRef(null)
   const audioCtxRef = useRef(null)
   const narrationGainRef = useRef(null)
   const narrationNextTimeRef = useRef(0)
-  const videoRef = useRef(null)
-  const canvasRef = useRef(null)
-  const capturingRef = useRef(false)
   const micStreamRef = useRef(null)
   const narrationTimerRef = useRef(null)
+  const phaseRef = useRef('idle')
 
-  // -- Emit event for HUD consumption --
+  // Keep phaseRef in sync
+  useEffect(() => {
+    phaseRef.current = phase
+  }, [phase])
+
   const emitEvent = useCallback((evt) => {
     setEvents((prev) => [...prev.slice(-20), { ...evt, _id: Date.now() + Math.random() }])
   }, [])
@@ -58,48 +59,6 @@ export default function useSilas() {
     const start = Math.max(now, narrationNextTimeRef.current)
     source.start(start)
     narrationNextTimeRef.current = start + buffer.duration
-  }, [])
-
-  // -- Camera capture --
-  const startCamera = useCallback(async (videoEl) => {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: 'environment', width: { ideal: 640 }, height: { ideal: 640 } },
-      audio: false,
-    })
-    videoEl.srcObject = stream
-    await videoEl.play()
-  }, [])
-
-  const captureLoop = useCallback(() => {
-    if (!capturingRef.current || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return
-
-    const video = videoRef.current
-    const canvas = canvasRef.current
-    if (!video || !canvas) return
-
-    const ctx = canvas.getContext('2d')
-    const vw = video.videoWidth
-    const vh = video.videoHeight
-    const size = Math.min(vw, vh)
-    canvas.width = 400
-    canvas.height = 400
-    ctx.drawImage(video, (vw - size) / 2, (vh - size) / 2, size, size, 0, 0, 400, 400)
-
-    canvas.toBlob(
-      (blob) => {
-        if (blob && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-          blob.arrayBuffer().then((buf) => {
-            const tagged = new Uint8Array(1 + buf.byteLength)
-            tagged[0] = TAG_CAMERA
-            tagged.set(new Uint8Array(buf), 1)
-            wsRef.current.send(tagged.buffer)
-          })
-        }
-        setTimeout(captureLoop, 1000)
-      },
-      'image/jpeg',
-      0.7,
-    )
   }, [])
 
   // -- Mic --
@@ -180,8 +139,6 @@ export default function useSilas() {
     ws.onopen = () => {
       console.log('[WS] Connected')
       ws.send(JSON.stringify({ type: 'start' }))
-      capturingRef.current = true
-      captureLoop()
       setPhase('active')
     }
 
@@ -195,40 +152,41 @@ export default function useSilas() {
 
     ws.onclose = () => {
       console.log('[WS] Disconnected')
-      if (capturingRef.current) {
+      const p = phaseRef.current
+      if (p === 'active' || p === 'paused') {
         setTimeout(connectWS, 2000)
       }
     }
 
     ws.onerror = (err) => console.error('[WS] Error', err)
-  }, [captureLoop, handleJSON, handleBinary])
+  }, [handleJSON, handleBinary])
 
   // -- Start --
-  const start = useCallback(
-    async (videoEl, canvasEl) => {
-      videoRef.current = videoEl
-      canvasRef.current = canvasEl
-      setPhase('starting')
+  const start = useCallback(async () => {
+    setPhase('starting')
 
-      try {
-        initAudio()
-        await startCamera(videoEl)
-      } catch (err) {
-        alert('Camera access required: ' + err.message)
-        setPhase('idle')
-        return
-      }
+    initAudio()
+    await startMic()
+    connectWS()
+  }, [initAudio, startMic, connectWS])
 
-      await startMic()
-      connectWS()
-    },
-    [initAudio, startCamera, startMic, connectWS],
-  )
+  // -- Toggle pause/resume --
+  const togglePause = useCallback(() => {
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return
+    if (phase === 'active') {
+      wsRef.current.send(JSON.stringify({ type: 'stop' }))
+      setPhase('paused')
+      setNarration('Paused')
+    } else if (phase === 'paused') {
+      wsRef.current.send(JSON.stringify({ type: 'start' }))
+      setPhase('active')
+      setNarration('Listening...')
+    }
+  }, [phase])
 
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      capturingRef.current = false
       if (wsRef.current) wsRef.current.close()
       if (audioCtxRef.current) audioCtxRef.current.close()
       if (micStreamRef.current) {
@@ -244,5 +202,6 @@ export default function useSilas() {
     voiceStatus,
     events,
     start,
+    togglePause,
   }
 }

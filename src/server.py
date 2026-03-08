@@ -6,7 +6,7 @@ import pathlib
 
 from aiohttp import WSMsgType, web
 
-from src.config import TAG_CAMERA, TAG_MIC_AUDIO
+from src.config import TAG_MIC_AUDIO
 from src.orchestrator import Orchestrator
 
 log = logging.getLogger(__name__)
@@ -45,9 +45,7 @@ async def ws_handler(request: web.Request):
                     continue
                 tag = msg.data[0]
                 payload = msg.data[1:]
-                if tag == TAG_CAMERA:
-                    await orch.handle_video_frame(payload)
-                elif tag == TAG_MIC_AUDIO:
+                if tag == TAG_MIC_AUDIO:
                     await orch.handle_mic_audio(payload)
 
             elif msg.type in (WSMsgType.ERROR, WSMsgType.CLOSE):
@@ -74,7 +72,6 @@ async def dist_file_handler(request: web.Request):
     filepath = FRONTEND_DIST / filename
     if filepath.exists() and filepath.is_file():
         return web.FileResponse(filepath)
-    # SPA fallback: serve index.html for unknown routes
     return await index_handler(request)
 
 
@@ -82,20 +79,14 @@ def create_app() -> web.Application:
     app = web.Application()
     app["orchestrator"] = Orchestrator()
 
-    # WebSocket must be first
     app.router.add_get("/ws", ws_handler)
-
-    # Index
     app.router.add_get("/", index_handler)
 
     if FRONTEND_DIST.exists():
-        # Serve Vite build assets (hashed JS/CSS bundles)
         if (FRONTEND_DIST / "assets").exists():
             app.router.add_static("/assets/", FRONTEND_DIST / "assets")
-        # Serve top-level dist files (mic-processor.js, etc.)
         app.router.add_get("/{filename}", dist_file_handler)
     else:
-        # Fallback to legacy static files
         app.router.add_static("/static/", ROOT / "static")
 
     return app

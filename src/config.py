@@ -1,4 +1,4 @@
-"""Configuration for Silas — gesture-based personal assistant."""
+"""Configuration for Silas — voice-only personal assistant."""
 
 import os
 
@@ -21,15 +21,7 @@ SPEECH_ONSET_SEC = 0.3
 SILENCE_TIMEOUT_SEC = 1.5
 VAD_CHUNK_SIZE = 480  # 30ms at 16kHz
 
-# Gesture detection
-GESTURE_COOLDOWN_SEC = 5.0  # minimum gap between gesture triggers
-
-# Watcher intervals (how often Gemini checks the scene for gestures)
-WATCHER_INTERVAL = 5  # seconds between gesture checks
-WATCHER_RESUME_DELAY = 5  # seconds after user stops talking / gesture before watcher resumes
-
 # WebSocket binary tags (phone -> server)
-TAG_CAMERA = 0x01
 TAG_MIC_AUDIO = 0x02
 
 # WebSocket binary tags (server -> phone)

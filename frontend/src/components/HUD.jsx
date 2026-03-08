@@ -1,14 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 
-const GESTURE_LABELS = {
-  thumbs_up: { icon: '\uD83D\uDC4D', label: 'Confirmed' },
-  open_palm: { icon: '\u270B', label: 'Taking note' },
-  peace_sign: { icon: '\u270C\uFE0F', label: 'Email' },
-  point_up: { icon: '\u261D\uFE0F', label: 'Calendar' },
-  wave: { icon: '\uD83D\uDC4B', label: 'Meeting' },
-  ok_sign: { icon: '\uD83D\uDC4C', label: 'Send' },
-}
-
 const ACTION_LABELS = {
   note: 'Note saved',
   note_start: 'Recording note',
@@ -28,7 +19,6 @@ const FEED_ICONS = {
   send_email: '\uD83D\uDCE8',
   read_email: '\uD83D\uDCE9',
   calendar_event: '\uD83D\uDCC5',
-  confirm: '\uD83D\uDC4D',
 }
 
 function formatTime(date) {
@@ -39,7 +29,6 @@ function formatTime(date) {
   )
 }
 
-// -- Toast Component --
 function Toast({ text, type, onDone }) {
   return (
     <div className={`toast toast-${type}`} onAnimationEnd={onDone}>
@@ -48,7 +37,6 @@ function Toast({ text, type, onDone }) {
   )
 }
 
-// -- Feed Entry --
 function FeedEntry({ icon, text, time, onFade }) {
   const [fading, setFading] = useState(false)
 
@@ -71,22 +59,18 @@ function FeedEntry({ icon, text, time, onFade }) {
   )
 }
 
-export default function HUD({ events, narration, vadState, voiceStatus }) {
-  const [gesture, setGesture] = useState(null)
+export default function HUD({ events, narration, vadState, voiceStatus, isPaused, onTogglePause }) {
   const [toasts, setToasts] = useState([])
   const [feed, setFeed] = useState([])
   const [statusLabel, setStatusLabel] = useState('ACTIVE')
   const [isRecording, setIsRecording] = useState(false)
-  const gestureBadgeTimer = useRef(null)
   const lastProcessedRef = useRef(0)
 
-  // Add a toast
   const addToast = useCallback((text, type) => {
     const id = Date.now() + Math.random()
     setToasts((prev) => [...prev, { id, text, type }])
   }, [])
 
-  // Add to activity feed
   const addToFeed = useCallback((action, message) => {
     const id = Date.now() + Math.random()
     const time = formatTime(new Date())
@@ -94,7 +78,7 @@ export default function HUD({ events, narration, vadState, voiceStatus }) {
     setFeed((prev) => [...prev.slice(-5), { id, icon, text: message, time }])
   }, [])
 
-  // Process events from useSilas
+  // Process events
   useEffect(() => {
     if (events.length === 0) return
     const latest = events[events.length - 1]
@@ -103,21 +87,11 @@ export default function HUD({ events, narration, vadState, voiceStatus }) {
 
     const event = latest
 
-    if (event.type === 'gesture') {
-      const info = GESTURE_LABELS[event.gesture] || { icon: '?', label: event.gesture }
-      setGesture(info)
-      clearTimeout(gestureBadgeTimer.current)
-      gestureBadgeTimer.current = setTimeout(() => setGesture(null), 3000)
-      addToast(`${info.icon} ${info.label}`, 'gesture')
-    } else if (event.type === 'action_armed') {
-      const label = ACTION_LABELS[event.action] || event.action
-      addToast(event.prompt || `${label} \u2014 speak now...`, 'armed')
-    } else if (event.type === 'action_result') {
+    if (event.type === 'action_result') {
       const label = ACTION_LABELS[event.action] || event.action
       const isError = event.status === 'error'
       addToast(event.message || label, isError ? 'error' : 'success')
 
-      // Track recording state
       if (event.action === 'note_start' && event.status === 'success') {
         setIsRecording(true)
         setStatusLabel('REC NOTE')
@@ -129,10 +103,17 @@ export default function HUD({ events, narration, vadState, voiceStatus }) {
       if (!isError) {
         addToFeed(event.action, event.message || label)
       }
-    } else if (event.type === 'action_timeout') {
-      addToast(event.message || 'Action timed out', 'error')
     }
   }, [events, addToast, addToFeed])
+
+  // Update status label when paused
+  useEffect(() => {
+    if (isPaused) {
+      setStatusLabel('PAUSED')
+    } else if (!isRecording) {
+      setStatusLabel('ACTIVE')
+    }
+  }, [isPaused, isRecording])
 
   const removeToast = useCallback((id) => {
     setToasts((prev) => prev.filter((t) => t.id !== id))
@@ -149,16 +130,18 @@ export default function HUD({ events, narration, vadState, voiceStatus }) {
       {/* Top bar */}
       <div className="hud-top">
         <div>
-          <div className={`status-pill${isRecording ? ' recording' : ''}`}>
+          <div className={`status-pill${isRecording ? ' recording' : ''}${isPaused ? ' paused' : ''}`}>
             <div className="status-dot" />
             <span>{statusLabel}</span>
           </div>
         </div>
         <div>
-          <div className={`gesture-badge${gesture ? ' visible' : ''}`}>
-            <span className="gesture-badge-icon">{gesture?.icon}</span>
-            <span className="gesture-badge-text">{gesture?.label}</span>
-          </div>
+          <button
+            className={`pause-btn${isPaused ? ' paused' : ''}`}
+            onClick={onTogglePause}
+          >
+            {isPaused ? 'RESUME' : 'PAUSE'}
+          </button>
         </div>
       </div>
 

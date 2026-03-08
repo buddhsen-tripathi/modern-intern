@@ -35,28 +35,14 @@ html, body, #root {
   width: 100%;
   height: 100%;
   overflow: hidden;
-  background: #000;
+  background:
+    radial-gradient(ellipse at 30% 20%, rgba(99, 102, 241, 0.06) 0%, transparent 50%),
+    radial-gradient(ellipse at 70% 80%, rgba(34, 197, 94, 0.03) 0%, transparent 50%),
+    var(--bg);
   font-family: var(--font-sans);
   color: var(--text);
   user-select: none;
   -webkit-user-select: none;
-}
-
-/* ── Camera layer ── */
-.camera-layer {
-  position: fixed;
-  inset: 0;
-  z-index: 0;
-}
-
-.camera-layer video {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.camera-layer canvas {
-  display: none;
 }
 
 /* ── Buttons ── */
@@ -157,52 +143,6 @@ html, body, #root {
   color: var(--text-muted);
   letter-spacing: 1px;
   text-transform: uppercase;
-}
-
-/* Gesture guide */
-.gesture-guide {
-  width: 100%;
-  padding: 16px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-}
-
-.gesture-guide-title {
-  font-family: var(--font-mono);
-  font-size: 9px;
-  font-weight: 600;
-  letter-spacing: 2px;
-  color: var(--text-muted);
-  margin-bottom: 12px;
-  text-align: center;
-}
-
-.gesture-list {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 8px;
-}
-
-.gesture-item {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-  padding: 8px 4px;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.03);
-}
-
-.gesture-icon {
-  font-size: 20px;
-}
-
-.gesture-label {
-  font-size: 10px;
-  font-weight: 500;
-  color: var(--text-secondary);
-  letter-spacing: 0.5px;
 }
 
 /* Voice commands guide */
@@ -312,39 +252,43 @@ html, body, #root {
   50% { opacity: 0.4; }
 }
 
-/* Gesture badge */
-.gesture-badge {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
-  background: rgba(0, 0, 0, 0.5);
-  border: 1px solid var(--primary);
-  border-radius: 20px;
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  opacity: 0;
-  transform: translateY(-8px);
-  transition: all 0.3s ease;
-  pointer-events: none;
-}
-
-.gesture-badge.visible {
-  opacity: 1;
-  transform: translateY(0);
-}
-
-.gesture-badge-icon {
-  font-size: 16px;
-}
-
-.gesture-badge-text {
+/* Pause button */
+.pause-btn {
   font-family: var(--font-mono);
   font-size: 10px;
   font-weight: 600;
-  letter-spacing: 1px;
-  color: var(--text);
-  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  background: rgba(0, 0, 0, 0.5);
+  color: var(--text-secondary);
+  cursor: pointer;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  pointer-events: auto;
+  transition: all 0.2s ease;
+}
+
+.pause-btn:active {
+  transform: scale(0.95);
+}
+
+.pause-btn.paused {
+  border-color: var(--primary);
+  color: var(--primary);
+  box-shadow: 0 0 8px var(--glow);
+}
+
+/* Paused state for status pill */
+.status-pill.paused {
+  color: var(--text-muted);
+}
+
+.status-pill.paused .status-dot {
+  background: var(--text-muted);
+  box-shadow: none;
+  animation: none;
 }
 
 /* ── Mid: Toasts ── */

@@ -1,8 +1,7 @@
-"""Gemini Live API service with VAD — personal assistant mode.
+"""Gemini Live API service with VAD — voice-only personal assistant.
 
-Gesture detection via speech: Gemini speaks gesture/action cues aloud,
-and we parse them from the narration text (since native audio model
-does not output text tags).
+User speaks commands, Gemini parses and announces actions via speech.
+We parse action announcements from the narration text.
 """
 
 import asyncio
@@ -22,35 +21,17 @@ from src.config import (
     SILENCE_TIMEOUT_SEC,
     VAD_AGGRESSIVENESS,
     VAD_CHUNK_SIZE,
-    WATCHER_INTERVAL,
-    WATCHER_RESUME_DELAY,
 )
 
 log = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """\
-You are SILAS — a concise personal assistant. You see via phone camera and hear via mic.
+You are SILAS — a concise voice-only personal assistant. You hear via mic and speak via audio.
 
 CRITICAL RULES:
-1. NEVER think out loud. No "analyzing", "scanning", "I see", "let me check".
-2. When you see a gesture, say ONLY "GESTURE: <name>" — nothing else.
-3. When no gesture is visible and you get a GESTURE CHECK, produce NO output. Stay completely silent. Do NOT say anything.
-4. Keep ALL replies to ONE short sentence. No explanations.
-
-─── CAMERA ────────────────────────────────────────────────
-Rear camera faces outward — you see what's in front of the user.
-
-─── GESTURES ──────────────────────────────────────────────
-Watch for hand gestures in every frame:
-• THUMBS UP — fist with thumb up
-• OPEN PALM — five fingers spread, palm facing camera
-• PEACE SIGN — index + middle fingers in V
-• POINTING UP — only index finger extended up
-• WAVE — open hand moving side to side
-• OK SIGN — thumb + index forming a circle
-
-When you see one → say "GESTURE: <name>" (e.g. "GESTURE: thumbs up")
-When you DON'T see one → say absolutely nothing.
+1. NEVER think out loud. No "analyzing", "scanning", "let me check".
+2. Keep ALL replies to ONE short sentence. No explanations.
+3. Be natural and conversational, but always brief.
 
 ─── VOICE COMMANDS ────────────────────────────────────────
 When user speaks a command, say "ACTION: <type>" with details:
@@ -67,33 +48,18 @@ IMPORTANT for notes:
 - If user says "note end", "stop note", "done with note", "that's it" → say "ACTION: note stop."
 - If user says "note: buy milk" (short, all at once) → say "ACTION: note. buy milk."
 
-Then a brief confirmation like "Got it" or "Done". Nothing more."""
+Then a brief confirmation like "Got it" or "Done". Nothing more.
 
-# Parse spoken gesture announcements from narration text
-# Matches: "gesture: open palm", "Gesture: thumbs up", etc.
-SPOKEN_GESTURE_RE = re.compile(
-    r"gesture:\s*(thumbs?\s*up|open\s*palm|peace\s*sign|point(?:ing)?\s*up|wave|ok\s*sign)",
-    re.IGNORECASE,
-)
+─── CONVERSATION ──────────────────────────────────────────
+You can also have brief natural conversations with the user.
+If they ask a question, answer concisely. If they chat, be friendly but brief.
+Only use ACTION: when the user gives an actual command."""
 
 # Parse spoken action announcements from narration text
-# Matches: "action: note", "Action: draft email", "action: note start", etc.
 SPOKEN_ACTION_RE = re.compile(
     r"action:\s*(note\s*(?:start|stop)|note|draft\s*email|send\s*email|read\s*email|calendar\s*event|meeting\s*minutes\s*(?:start|stop))",
     re.IGNORECASE,
 )
-
-# Normalize gesture names from speech to internal names
-GESTURE_NORMALIZE = {
-    "thumbs up": "thumbs_up",
-    "thumb up": "thumbs_up",
-    "open palm": "open_palm",
-    "peace sign": "peace_sign",
-    "pointing up": "point_up",
-    "point up": "point_up",
-    "wave": "wave",
-    "ok sign": "ok_sign",
-}
 
 # Normalize action names from speech to internal names
 ACTION_NORMALIZE = {
@@ -110,30 +76,19 @@ ACTION_NORMALIZE = {
     "meeting minutes stop": "meeting_minutes_stop",
 }
 
-WATCHER_PROMPTS = [
-    "GESTURE CHECK. Hand visible? → say GESTURE: <name>. No hand? → say nothing.",
-    "GESTURE CHECK. Any hand gesture in frame? If yes: GESTURE: <name>. If no: silence.",
-    "GESTURE CHECK. Look for hands. Gesture → announce. No gesture → no output.",
-]
-
 MAX_RECONNECT_ATTEMPTS = 5
 MAX_OBSERVATION_BUFFER = 10
 
 # Patterns that indicate Gemini's internal reasoning (not user-facing speech)
 THINKING_PATTERNS = re.compile(
     r"(?i)"
-    r"(?:^|\n)\s*\*\*.*?\*\*"            # Markdown bold headers like **Analyzing...**
+    r"(?:^|\n)\s*\*\*.*?\*\*"            # Markdown bold headers
     r"|(?:^|\n)\s*#+\s+"                  # Markdown # headers
     r"|(?:analyzing|initiating|processing|examining|scanning|observing|checking)"
-    r"\s+(?:gesture|frame|video|image|request|observation|protocol|the current)"
+    r"\s+(?:request|observation|protocol|the current|input|command)"
     r"|I(?:'ve| have)\s+(?:examined|analyzed|scanned|processed|checked|looked at)\s+(?:the|this)"
-    r"|no\s+(?:hand|gesture|fingers?)(?:\s+(?:gesture|visible|detected|present|seen))"
-    r"|I\s+(?:don't|do not)\s+see\s+(?:any\s+)?(?:hand|gesture|fingers?)"
     r"|nothing\s+(?:detected|visible|to report)"
-    r"|the\s+frame\s+(?:shows?|contains?|appears?)"
-    r"|current(?:ly)?\s+(?:frame|video|image)\s+(?:shows?|contains?)"
     r"|let me (?:check|scan|look|examine|analyze)"
-    r"|gesture check(?:ing)?\s*(?:complete|done|finished)?"
 )
 
 
@@ -153,34 +108,21 @@ class GeminiService:
         self._pending_buffer = []
         self._silence = b"\x00" * VAD_CHUNK_SIZE * 2
 
-        # Watcher-pause state
-        self._watcher_paused = False
-        self._user_stopped_speaking_at = 0.0
-        self._user_interacted = False
-
-        # Gesture dedup: suppress repeated same-gesture detections
-        self._last_gesture: str | None = None
-        self._last_gesture_time: float = 0.0
-        self._gesture_dedup_window = 10.0  # seconds to suppress same gesture
-
         # Observation buffer for context
         self._observation_buffer: list[str] = []
 
         # Callbacks
         self._on_audio = None
         self._on_narration = None
-        self._on_gesture = None
         self._on_action = None
         self._on_vad_state = None
 
         self._receive_task = None
-        self._watcher_task = None
 
     def set_callbacks(self, on_audio=None, on_narration=None,
-                      on_gesture=None, on_action=None, on_vad_state=None):
+                      on_action=None, on_vad_state=None):
         self._on_audio = on_audio
         self._on_narration = on_narration
-        self._on_gesture = on_gesture
         self._on_action = on_action
         self._on_vad_state = on_vad_state
 
@@ -211,11 +153,11 @@ class GeminiService:
                 thinking_budget=0,
             )
         except Exception:
-            pass  # Not all model versions support this
+            pass
         return types.LiveConnectConfig(**config_kwargs)
 
     async def start_session(self):
-        """Connect to Gemini and start watching for gestures immediately."""
+        """Connect to Gemini and start listening."""
         log.info("Connecting to Gemini Live API...")
         self._observation_buffer.clear()
         config = self._build_live_config()
@@ -232,21 +174,17 @@ class GeminiService:
             turns=types.Content(
                 role="user",
                 parts=[types.Part(text=(
-                    "Session started. Say a 3-4 word greeting like 'Hey, Silas here.' "
-                    "then start watching silently. Do NOT describe what you see."
+                    "Session started. Say a brief greeting like 'Hey, Silas here. What can I do for you?'"
                 ))],
             ),
             turn_complete=True,
         )
-        log.info("Session started — watching for gestures and commands")
-
-        self._watcher_task = asyncio.create_task(self._watcher())
+        log.info("Session started — listening for voice commands")
 
     async def stop(self):
         self._running = False
-        for task in (self._receive_task, self._watcher_task):
-            if task:
-                task.cancel()
+        if self._receive_task:
+            self._receive_task.cancel()
         if self._ctx:
             try:
                 await self._ctx.__aexit__(None, None, None)
@@ -272,16 +210,6 @@ class GeminiService:
             )
         except Exception as e:
             log.error(f"Error sending prompt: {e}")
-
-    async def send_video_frame(self, jpeg_bytes: bytes):
-        if not self._session or not self._running:
-            return
-        try:
-            await self._session.send_realtime_input(
-                video=types.Blob(data=jpeg_bytes, mime_type="image/jpeg"),
-            )
-        except Exception as e:
-            log.error(f"Error sending video: {e}")
 
     def _fire_vad_state(self, state: str):
         if self._on_vad_state:
@@ -327,9 +255,6 @@ class GeminiService:
                     self._pending_buffer = []
                     self._last_speech = now
                     self._mic_state = "LISTENING"
-                    self._watcher_paused = True
-                    if not self._user_interacted:
-                        self._user_interacted = True
             else:
                 if now - self._speech_start > SPEECH_ONSET_SEC:
                     self._pending_buffer = []
@@ -341,7 +266,6 @@ class GeminiService:
                 self._last_speech = now
             if now - self._last_speech > SILENCE_TIMEOUT_SEC:
                 self._mic_state = "IDLE"
-                self._user_stopped_speaking_at = now
                 asyncio.create_task(self._signal_user_done())
 
         if self._mic_state != prev_state:
@@ -394,7 +318,7 @@ class GeminiService:
                             if self._on_audio:
                                 asyncio.create_task(self._on_audio(msg.data))
 
-                        # Text — collect from msg.text (skip if it's thought/reasoning)
+                        # Text — collect from msg.text (skip thought/reasoning)
                         if msg.text and not getattr(msg, "thought", False):
                             text_buf += msg.text
 
@@ -405,7 +329,6 @@ class GeminiService:
                             if hasattr(sc, "model_turn") and sc.model_turn:
                                 for part in (sc.model_turn.parts or []):
                                     try:
-                                        # Skip thought/reasoning parts
                                         if hasattr(part, "thought") and part.thought:
                                             continue
                                         if hasattr(part, "text") and part.text:
@@ -460,28 +383,7 @@ class GeminiService:
             await asyncio.sleep(5.0)
 
     def _parse_speech(self, text: str):
-        """Parse Gemini's spoken output for gesture and action announcements."""
-
-        # Check for gesture announcements: "GESTURE: open palm"
-        gesture_match = SPOKEN_GESTURE_RE.search(text)
-        if gesture_match:
-            raw = gesture_match.group(1).strip().lower()
-            gesture = GESTURE_NORMALIZE.get(raw)
-            if gesture:
-                now = time.monotonic()
-                # Dedup: suppress if same gesture detected within window
-                if (gesture == self._last_gesture
-                        and now - self._last_gesture_time < self._gesture_dedup_window):
-                    log.info("GESTURE (spoken): %s → %s [DEDUP suppressed]", raw, gesture)
-                else:
-                    self._last_gesture = gesture
-                    self._last_gesture_time = now
-                    # Pause watcher after gesture detection to avoid re-triggers
-                    self._watcher_paused = True
-                    self._user_stopped_speaking_at = now
-                    log.info("GESTURE (spoken): %s → %s", raw, gesture)
-                    if self._on_gesture:
-                        asyncio.create_task(self._on_gesture(gesture))
+        """Parse Gemini's spoken output for action announcements."""
 
         # Check for action announcements: "ACTION: note. Buy groceries."
         action_match = SPOKEN_ACTION_RE.search(text)
@@ -489,18 +391,16 @@ class GeminiService:
             raw_action = action_match.group(1).strip().lower()
             action = ACTION_NORMALIZE.get(raw_action)
             if action:
-                # Extract content after the action announcement
                 after = text[action_match.end():].strip().strip(".").strip()
                 params = self._build_params_from_speech(action, after)
                 log.info("ACTION (spoken): %s params=%s", action, params)
                 if self._on_action:
                     asyncio.create_task(self._on_action(action, params))
 
-        # Strip gesture/action prefixes from display text
-        display = SPOKEN_GESTURE_RE.sub("", text)
-        display = SPOKEN_ACTION_RE.sub("", display).strip()
+        # Strip action prefix from display text
+        display = SPOKEN_ACTION_RE.sub("", text).strip()
 
-        # Filter out Gemini's internal thinking/reasoning — only show user-facing speech
+        # Filter out internal thinking
         display = self._filter_narration(display)
 
         if display:
@@ -515,13 +415,10 @@ class GeminiService:
         if not text:
             return ""
 
-        # Strip markdown formatting
-        clean = re.sub(r"\*\*([^*]*)\*\*", r"\1", text)  # **bold** → bold
-        clean = re.sub(r"^\s*#+\s+", "", clean, flags=re.MULTILINE)  # # headers
+        clean = re.sub(r"\*\*([^*]*)\*\*", r"\1", text)
+        clean = re.sub(r"^\s*#+\s+", "", clean, flags=re.MULTILINE)
 
-        # If the whole text matches thinking patterns, suppress it entirely
         if THINKING_PATTERNS.search(clean):
-            # Extract any remaining user-facing content after removing thinking parts
             lines = clean.split("\n")
             kept = []
             for line in lines:
@@ -533,9 +430,7 @@ class GeminiService:
                 kept.append(line)
             clean = " ".join(kept).strip()
 
-        # Strip trailing/leading whitespace and orphan punctuation
         clean = clean.strip().strip(".-—").strip()
-
         return clean
 
     def _build_params_from_speech(self, action: str, spoken_content: str) -> dict:
@@ -559,40 +454,3 @@ class GeminiService:
         elif action == "calendar_event":
             return {"title": spoken_content[:60]} if spoken_content else {}
         return {}
-
-    async def _watcher(self):
-        """Periodically prompt Gemini to check for hand gestures in the video."""
-        await asyncio.sleep(3)
-        idx = 0
-        try:
-            while self._running:
-                if self._gemini_speaking:
-                    await asyncio.sleep(1)
-                    continue
-
-                if self._watcher_paused:
-                    elapsed = time.monotonic() - self._user_stopped_speaking_at
-                    if self._user_stopped_speaking_at > 0 and elapsed >= WATCHER_RESUME_DELAY:
-                        self._watcher_paused = False
-                    else:
-                        await asyncio.sleep(1)
-                        continue
-
-                prompt = WATCHER_PROMPTS[idx % len(WATCHER_PROMPTS)]
-
-                log.info("Watcher: gesture check #%d", idx + 1)
-                try:
-                    await self._session.send_client_content(
-                        turns=types.Content(
-                            role="user",
-                            parts=[types.Part(text=prompt)],
-                        ),
-                        turn_complete=True,
-                    )
-                except Exception as e:
-                    log.error(f"Watcher error: {e}")
-                idx += 1
-
-                await asyncio.sleep(WATCHER_INTERVAL)
-        except asyncio.CancelledError:
-            pass

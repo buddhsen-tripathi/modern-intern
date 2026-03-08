@@ -1,4 +1,4 @@
-"""Silas — gesture-based personal assistant server."""
+"""Silas — voice-only personal assistant server."""
 
 import asyncio
 import json
@@ -120,11 +120,11 @@ if __name__ == "__main__":
     app = create_app()
     app.on_startup.append(_start_stdin_reader)
     app.on_cleanup.append(_stop_stdin_reader)
-    print(f"\n  SILAS — personal assistant")
+    print(f"\n  SILAS — voice assistant")
     print(f"  Server: http://{HOST}:{PORT}")
     print(f"  Open on phone: http://<your-ip>:{PORT}")
     print()
-    print("  Gestures: open_palm=note, peace=email, point_up=calendar, wave=meeting, ok=send")
+    print('  Voice: "take note", "note end", "draft email", "calendar event", "meeting minutes"')
     print()
     print("  Cloudflare: run 'cloudflared tunnel --url http://localhost:8080'")
     print("  Type 'help' for terminal commands.\n")

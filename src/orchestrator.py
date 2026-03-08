@@ -1,43 +1,19 @@
-"""Orchestrator: central brain that routes gestures and voice to agents.
+"""Orchestrator: central brain that routes voice commands to agents.
 
-Gestures = triggers (what to do)
-Audio/voice = content (what to do it with)
-
-Flow: gesture arms an action → Silas prompts user → user speaks → action executes.
+Voice-only mode: user speaks commands, Silas responds and executes actions.
 """
 
 import logging
 import os
-import time
 
 from src.agents.calendar_agent import CalendarAgent
 from src.agents.email_agent import EmailAgent
 from src.agents.meeting_agent import MeetingAgent
 from src.agents.note_agent import NoteAgent
-from src.config import GESTURE_COOLDOWN_SEC
 from src.display.web_display import WebDisplayService
 from src.services.gemini_service import GeminiService
 
 log = logging.getLogger(__name__)
-
-# Gesture → action type mapping
-GESTURE_ACTION_MAP = {
-    "open_palm": "note",
-    "peace_sign": "draft_email",
-    "point_up": "calendar_event",
-    "wave": "meeting_minutes",
-    "ok_sign": "send_email",
-    "thumbs_up": "confirm",
-}
-
-# Prompts Silas speaks to solicit voice input after a gesture
-GESTURE_PROMPTS = {
-    "note": "Ready to take a note. What should I write down?",
-    "draft_email": "Drafting an email. Who's it for and what should it say?",
-    "calendar_event": "Creating a calendar event. What's the event and when?",
-    "send_email": None,  # immediate action, no voice input needed
-    "confirm": None,  # immediate action
-}
 
 
 class Orchestrator:
@@ -74,14 +50,6 @@ class Orchestrator:
         self._note_recording = False
         self._note_buffer: list[str] = []
 
-        # Pending action: gesture arms it, voice completes it
-        self._pending_action: str | None = None
-        self._pending_since: float = 0.0
-        self._pending_timeout = 15.0  # seconds to wait for voice input
-
-        # Gesture cooldown tracking
-        self._last_gesture_time: float = 0.0
-
         # Recent observations for agent context
         self._observations: list[str] = []
         self._max_observations = 20
@@ -90,13 +58,12 @@ class Orchestrator:
         self.gemini.set_callbacks(
             on_audio=self._on_narration_audio,
             on_narration=self._on_narration_text,
-            on_gesture=self._on_gesture,
             on_action=self._on_action,
             on_vad_state=self._on_vad_state,
         )
 
     async def start_session(self):
-        """Connect to Gemini and start watching — single step, no intro."""
+        """Connect to Gemini and start listening."""
         if self._started:
             return
         self._started = True
@@ -107,12 +74,8 @@ class Orchestrator:
         if not self._started and not self.gemini.connected:
             return
         self._started = False
-        self._pending_action = None
         log.info("Stopping session...")
         await self.gemini.stop()
-
-    async def handle_video_frame(self, jpeg_bytes: bytes):
-        await self.gemini.send_video_frame(jpeg_bytes)
 
     async def handle_mic_audio(self, pcm_data: bytes):
         await self.gemini.send_mic_audio(pcm_data)
@@ -134,70 +97,8 @@ class Orchestrator:
         if len(self._observations) > self._max_observations:
             self._observations.pop(0)
 
-    async def _on_gesture(self, gesture: str):
-        now = time.monotonic()
-        if now - self._last_gesture_time < GESTURE_COOLDOWN_SEC:
-            log.info("Gesture %s ignored (cooldown)", gesture)
-            return
-        self._last_gesture_time = now
-
-        action_type = GESTURE_ACTION_MAP.get(gesture)
-        if not action_type:
-            log.info("Unknown gesture: %s", gesture)
-            return
-
-        log.info("Gesture detected: %s → %s", gesture, action_type)
-        await self.display.send_event({
-            "type": "gesture",
-            "gesture": gesture,
-            "action": action_type,
-        })
-
-        # Meeting minutes: toggle immediately (no voice input needed)
-        if action_type == "meeting_minutes":
-            cmd = "stop" if self._meeting_agent.recording else "start"
-            await self._execute_action("meeting_minutes", {"command": cmd})
-            return
-
-        # Send/confirm: execute immediately
-        if action_type in ("send_email", "confirm"):
-            await self._execute_action(action_type, {})
-            return
-
-        # For note, email, calendar: arm the action and wait for voice
-        prompt = GESTURE_PROMPTS.get(action_type)
-        self._pending_action = action_type
-        self._pending_since = now
-        log.info("Action armed: %s — waiting for voice input", action_type)
-
-        await self.display.send_event({
-            "type": "action_armed",
-            "action": action_type,
-            "prompt": prompt,
-        })
-
-        # Tell Gemini to prompt the user for input
-        if prompt:
-            await self.gemini.send_prompt(prompt)
-
     async def _on_action(self, action_type: str, params: dict):
-        """Called when Gemini emits an <<ACTION>> tag (from voice command or
-        after a gesture+voice sequence)."""
-
-        # If there's a pending gesture-armed action, the voice input fills it
-        if self._pending_action:
-            elapsed = time.monotonic() - self._pending_since
-            if elapsed < self._pending_timeout:
-                armed = self._pending_action
-                self._pending_action = None
-                log.info("Pending action %s fulfilled with voice params", armed)
-                await self._execute_action(armed, params)
-                return
-            else:
-                log.info("Pending action %s expired", self._pending_action)
-                self._pending_action = None
-
-        # Direct voice command (no gesture needed)
+        """Called when Gemini announces an action via speech."""
         await self._execute_action(action_type, params)
 
     async def _execute_action(self, action_type: str, params: dict):
@@ -252,7 +153,7 @@ class Orchestrator:
                 await self.gemini.send_prompt("Nothing to save.")
             return
 
-        # Normalize meeting_minutes_start/stop → meeting_minutes with command param
+        # Normalize meeting_minutes_start/stop
         if action_type == "meeting_minutes_start":
             action_type = "meeting_minutes"
             params = {"command": "start"}
@@ -263,16 +164,6 @@ class Orchestrator:
         log.info(">>> EXECUTE: %s params=%s", action_type, params)
         agent = self._agents.get(action_type)
         if not agent:
-            if action_type == "confirm":
-                log.info("Confirm acknowledged")
-                await self.display.send_event({
-                    "type": "action_result",
-                    "action": "confirm",
-                    "status": "success",
-                    "message": "Confirmed.",
-                })
-                await self.gemini.send_prompt("Got it.")
-                return
             log.warning("No agent for action: %s", action_type)
             return
 
@@ -310,26 +201,14 @@ class Orchestrator:
     async def _on_vad_state(self, state: str):
         await self.display.send_vad_state(state)
 
-        # If pending action timed out, clear it
-        if self._pending_action:
-            elapsed = time.monotonic() - self._pending_since
-            if elapsed >= self._pending_timeout:
-                log.info("Pending action %s timed out", self._pending_action)
-                self._pending_action = None
-                await self.display.send_event({
-                    "type": "action_timeout",
-                    "message": "Action cancelled — no voice input received.",
-                })
-
     # -- Terminal command helpers --
 
     async def inject_narration(self, text: str):
-        await self.gemini.inject_narration(text)
+        await self.gemini.send_prompt(text)
 
     def get_status(self) -> dict:
         return {
             "started": self._started,
-            "pending_action": self._pending_action,
             "note_recording": self._note_recording,
             "meeting_recording": self._meeting_agent.recording,
             "notes_count": len(self._note_agent.get_notes()),
